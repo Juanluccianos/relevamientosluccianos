@@ -64,7 +64,13 @@ button, input, select, textarea { font: inherit; color: inherit; }
 }
 .top h1 { margin: 0; font-size: 1.05rem; font-weight: 700; text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .top-btn { display: grid; place-items: center; height: 100%; text-decoration: none; font-size: 1.6rem; color: #fff; position: relative; background: none; border: 0; cursor: pointer; }
-.marca { font-weight: 800; font-style: italic; color: var(--dulce); font-size: .95rem; padding-left: 14px; white-space: nowrap; }
+.marca { display: flex; align-items: center; padding-left: 14px; height: 100%; }
+.marca img { height: 34px; width: auto; max-width: 120px; object-fit: contain; }
+.logo-txt { font-weight: 800; font-style: italic; color: var(--dulce); white-space: nowrap; }
+.marca .logo-txt { font-size: .95rem; }
+.logo-grande { display: flex; justify-content: center; }
+.logo-grande img { width: 200px; max-width: 70%; height: auto; object-fit: contain; }
+.logo-grande .logo-txt { font-size: 2.4rem; }
 .badge { position: absolute; top: 10px; right: 8px; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px; background: var(--urgente); color: #fff; font-size: .7rem; font-weight: 700; display: grid; place-items: center; }
 .top-btn svg { width: 22px; height: 22px; }
 
@@ -110,6 +116,11 @@ input[type=text], input[type=email], input[type=password], input[type=search], i
   border: 1px solid var(--linea); background: var(--papel);
 }
 textarea { min-height: 120px; resize: vertical; }
+.clave-wrap { position: relative; display: block; }
+.clave-wrap input { padding-right: 52px; }
+.ojo { position: absolute; top: 0; right: 0; width: 48px; height: 100%; display: grid; place-items: center; border: 0; background: none; color: var(--txt2); cursor: pointer; border-radius: 0 var(--r-s) var(--r-s) 0; }
+.ojo:hover { color: var(--cacao); }
+.ojo svg { width: 22px; height: 22px; }
 .check { display: flex !important; grid-template-columns: none; align-items: flex-start; gap: 10px; font-weight: 500 !important; }
 .check input { width: 20px; height: 20px; margin-top: 2px; }
 
@@ -267,7 +278,7 @@ details summary { cursor: pointer; font-weight: 700; padding: 6px 0; }
 /* ------------ login */
 .login { min-height: 100vh; display: grid; align-content: center; gap: 20px; padding: 24px; max-width: 420px; margin: 0 auto; }
 .login-marca { text-align: center; }
-.login-marca .logo { font-size: 2.4rem; font-weight: 800; font-style: italic; color: var(--dulce); }
+
 .login-marca p { margin: 4px 0 0; color: var(--txt2); font-weight: 600; }
 .login .link-sutil { text-align: center; }
 

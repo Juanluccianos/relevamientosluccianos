@@ -4,7 +4,7 @@
 
 // ↓↓↓ CAMBIAR por la URL de tu Worker (sin barra final)
 const API = 'https://relevamientos-api.lucciano-viaticos.workers.dev';
-const VERSION = '1.0.0';
+const VERSION = '1.1.0';
 const DISTANCIA_MAX = 300; // metros: más lejos que esto, se marca como "cargado fuera del local"
 
 /* ================================================================ utilidades */
@@ -43,6 +43,49 @@ function distancia(lat1, lng1, lat2, lng2) {
   const a = Math.sin((lat2 - lat1) * r / 2) ** 2 + Math.cos(lat1 * r) * Math.cos(lat2 * r) * Math.sin((lng2 - lng1) * r / 2) ** 2;
   return 2 * R * Math.asin(Math.sqrt(a));
 }
+/* ---- logo: negro sobre fondo claro, blanco sobre la barra oscura; si no carga, muestra el nombre en texto */
+function logo(clase, variante = 'negro') {
+  return `<span class="logo-wrap ${clase}"><img src="logo-${variante}.png" alt="Lucciano's" onerror="this.hidden=true;this.nextElementSibling.hidden=false"><span class="logo-txt" hidden>Lucciano's</span></span>`;
+}
+
+/* ---- campo de clave con ojito para mostrar u ocultar */
+const OJO = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12z"/><circle cx="12" cy="12" r="3"/></svg>';
+const OJO_TACHADO = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.9 17.9A10.1 10.1 0 0 1 12 19c-7 0-11-7-11-7a18.5 18.5 0 0 1 5.1-5.9"/><path d="M9.9 4.2A9.4 9.4 0 0 1 12 4c7 0 11 7 11 7a18.6 18.6 0 0 1-2.2 3.2"/><path d="M14.1 14.1a3 3 0 1 1-4.2-4.2"/><path d="M1 1l22 22"/></svg>';
+function campoClave(etiqueta, name, attrs = '') {
+  return `<label>${etiqueta}<span class="clave-wrap"><input name="${name}" type="password" ${attrs}><button type="button" class="ojo" aria-label="Mostrar clave" aria-pressed="false">${OJO}</button></span></label>`;
+}
+document.addEventListener('click', e => {
+  const b = e.target.closest('.ojo');
+  if (!b) return;
+  e.preventDefault();
+  const inp = b.previousElementSibling;
+  const ver = inp.type === 'password';
+  inp.type = ver ? 'text' : 'password';
+  b.innerHTML = ver ? OJO_TACHADO : OJO;
+  b.setAttribute('aria-label', ver ? 'Ocultar clave' : 'Mostrar clave');
+  b.setAttribute('aria-pressed', ver);
+  inp.focus();
+});
+
+/* ---- validación de formularios con mensajes claros */
+const emailValido = v => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(v).trim());
+function validar(form) {
+  for (const inp of form.querySelectorAll('input, select, textarea')) {
+    const nombre = (inp.closest('label')?.childNodes[0]?.textContent || 'este campo').trim().replace(/\s*\(.*\)$/, '');
+    const v = inp.value.trim();
+    if (inp.required && !v) return `Completá el campo "${nombre}"`;
+    if (inp.dataset.email !== undefined && v && !emailValido(v)) return 'El email tiene que tener un @ y un dominio, por ejemplo nombre@luccianos.com.ar';
+    if (inp.minLength > 0 && v && v.length < inp.minLength) return `"${nombre}" tiene que tener al menos ${inp.minLength} caracteres`;
+  }
+  return null;
+}
+function errorForm(msg) {
+  const el = $('#err');
+  if (!el) return toast(msg);
+  el.textContent = msg;
+  el.hidden = !msg;
+}
+
 const fmtDist = m => m >= 1000 ? `${(m / 1000).toLocaleString('es-AR', { maximumFractionDigits: 1 })} km` : `${Math.round(m)} m`;
 
 // Mismo cálculo que el Worker: pesos que cumplen / pesos evaluados, tope 100, crítico fallado tope 79
@@ -292,7 +335,7 @@ function pintar(v) {
       <header class="top">
         ${v.atras
           ? `<a class="top-btn" href="${v.atras}" aria-label="Volver">‹</a>`
-          : `<span class="marca">Lucciano's</span>`}
+          : logo('marca', 'blanco')}
         <h1>${esc(v.titulo)}</h1>
         <a class="top-btn" href="#/pendientes" aria-label="Relevamientos pendientes de enviar">${ICON.sync}<span class="badge" id="sync-badge" hidden></span></a>
       </header>
@@ -355,10 +398,10 @@ function vLogin() {
     sinNav: true,
     html: `
       <div class="login">
-        <div class="login-marca"><span class="logo">Lucciano's</span><p>Relevamientos de locales</p></div>
-        <form id="f-login" class="card form">
-          <label>Email<input name="email" type="email" autocomplete="username" required></label>
-          <label>Clave<input name="clave" type="password" autocomplete="current-password" required></label>
+        <div class="login-marca">${logo('logo-grande')}<p>Relevamientos de locales</p></div>
+        <form id="f-login" class="card form" novalidate>
+          <label>Email<input name="email" type="email" inputmode="email" autocomplete="username" required data-email></label>
+          ${campoClave('Clave', 'clave', 'autocomplete="current-password" required')}
           <p class="error" id="err" hidden></p>
           <button class="btn primario" type="submit">Ingresar</button>
         </form>
@@ -367,10 +410,12 @@ function vLogin() {
     montar() {
       $('#f-login').onsubmit = async e => {
         e.preventDefault();
+        const malo = validar(e.target);
+        if (malo) return errorForm(malo);
         const f = new FormData(e.target);
-        const btn = e.target.querySelector('button');
+        const btn = e.target.querySelector('button[type=submit]');
         btn.disabled = true;
-        $('#err').hidden = true;
+        errorForm('');
         try {
           entrar(await post('/api/login', { email: f.get('email'), clave: f.get('clave') }));
         } catch (err) {
@@ -388,12 +433,12 @@ function vInstalar() {
     sinNav: true,
     html: `
       <div class="login">
-        <div class="login-marca"><span class="logo">Lucciano's</span><p>Crear el primer administrador</p></div>
-        <form id="f-setup" class="card form">
-          <label>Clave de instalación<input name="ci" type="password" required></label>
-          <label>Tu nombre<input name="nombre" required></label>
-          <label>Email<input name="email" type="email" required></label>
-          <label>Clave (mínimo 8 caracteres)<input name="clave" type="password" minlength="8" required></label>
+        <div class="login-marca">${logo('logo-grande')}<p>Crear el primer administrador</p></div>
+        <form id="f-setup" class="card form" novalidate>
+          ${campoClave('Clave de instalación', 'ci', 'autocomplete="off" required')}
+          <label>Tu nombre<input name="nombre" autocomplete="name" required></label>
+          <label>Email<input name="email" type="email" inputmode="email" autocomplete="username" required data-email></label>
+          ${campoClave('Clave (mínimo 8 caracteres)', 'clave', 'autocomplete="new-password" minlength="8" required')}
           <p class="error" id="err" hidden></p>
           <button class="btn primario" type="submit">Crear administrador</button>
         </form>
@@ -402,6 +447,8 @@ function vInstalar() {
     montar() {
       $('#f-setup').onsubmit = async e => {
         e.preventDefault();
+        const malo = validar(e.target);
+        if (malo) return errorForm(malo);
         const f = new FormData(e.target);
         try {
           entrar(await post('/api/setup', {
@@ -1020,10 +1067,10 @@ async function vAdmin() {
     const { usuarios } = await api('/api/admin/usuarios');
     const rol = { admin: 'Administrador', jefe: 'Jefe', supervisor: 'Supervisor' };
     html = `
-      <form id="f-user" class="card form">
+      <form id="f-user" class="card form" novalidate>
         <strong>Nuevo usuario</strong>
         <label>Nombre y apellido<input name="nombre" required></label>
-        <label>Email<input name="email" type="email" required></label>
+        <label>Email<input name="email" type="email" inputmode="email" required data-email></label>
         <label>Rol<select name="rol">
           <option value="supervisor">Supervisor: releva sus locales</option>
           <option value="jefe">Jefe: ve todo y el resumen</option>
@@ -1044,6 +1091,8 @@ async function vAdmin() {
     montar = () => {
       $('#f-user').onsubmit = async e => {
         e.preventDefault();
+        const malo = validar(e.target);
+        if (malo) return errorForm(malo);
         const f = new FormData(e.target);
         try {
           await post('/api/admin/usuarios', Object.fromEntries(f));
@@ -1166,9 +1215,9 @@ function vCuenta() {
         </div>
       </div>
       <div class="bloque"><h2>Cambiar clave</h2>
-        <form id="f-clave" class="card form">
-          <label>Clave actual<input name="actual" type="password" autocomplete="current-password" required></label>
-          <label>Clave nueva (mínimo 8 caracteres)<input name="nueva" type="password" autocomplete="new-password" minlength="8" required></label>
+        <form id="f-clave" class="card form" novalidate>
+          ${campoClave('Clave actual', 'actual', 'autocomplete="current-password" required')}
+          ${campoClave('Clave nueva (mínimo 8 caracteres)', 'nueva', 'autocomplete="new-password" minlength="8" required')}
           <p class="error" id="err" hidden></p>
           <button class="btn primario" type="submit">Cambiar clave</button>
         </form>
@@ -1184,6 +1233,8 @@ function vCuenta() {
       };
       $('#f-clave').onsubmit = async e => {
         e.preventDefault();
+        const malo = validar(e.target);
+        if (malo) return errorForm(malo);
         const f = new FormData(e.target);
         try {
           await post('/api/cambiar-clave', { actual: f.get('actual'), nueva: f.get('nueva') });
