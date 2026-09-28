@@ -1,6 +1,6 @@
 /* Relevamientos Lucciano's — service worker
    Subí el número de CACHE cada vez que cambies index.html o app.js */
-const CACHE = 'relevamientos-v2';
+const CACHE = 'relevamientos-v3';
 const SHELL = ['./', './index.html', './app.js', './manifest.json', './icon-192.png', './icon-512.png', './logo-negro.png', './logo-blanco.png'];
 
 self.addEventListener('install', e => {
@@ -24,6 +24,7 @@ self.addEventListener('fetch', e => {
   const esPropio = url.origin === location.origin;
   const esFuente = url.hostname === 'fonts.googleapis.com' || url.hostname === 'fonts.gstatic.com';
   if (!esPropio && !esFuente) return;
+  if (url.pathname.includes('/api/')) return;
 
   // Muestra lo guardado al instante y actualiza en segundo plano
   e.respondWith(

@@ -4,7 +4,7 @@
 
 // ↓↓↓ CAMBIAR por la URL de tu Worker (sin barra final)
 const API = 'https://relevamientos-api.lucciano-viaticos.workers.dev';
-const VERSION = '1.1.0';
+const VERSION = '2.0.0';
 const DISTANCIA_MAX = 300; // metros: más lejos que esto, se marca como "cargado fuera del local"
 
 /* ================================================================ utilidades */
@@ -35,6 +35,8 @@ const mesCorto = p => {
   const [y, m] = p.split('-').map(Number);
   return new Date(y, m - 1, 1).toLocaleDateString('es-AR', { month: 'short' }).replace('.', '');
 };
+// "Lucciano's Alem" → "Alem": el logo ya dice Lucciano's, así el nombre del local entra entero
+const nom = n => String(n || '').replace(/^Lucciano[’'´`]?s\s+(•\s*)?/i, '');
 const primerNombre = n => String(n || '').split(' ')[0];
 const esJefe = () => ['admin', 'jefe'].includes(S.user?.role);
 
@@ -111,8 +113,36 @@ const ICON = {
   admin: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-2.9 1.2V21a2 2 0 1 1-4 0v-.1A1.7 1.7 0 0 0 7 19.4a1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1A1.7 1.7 0 0 0 1.2 14H1a2 2 0 1 1 0-4h.1A1.7 1.7 0 0 0 2.6 7a1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1A1.7 1.7 0 0 0 7 2.6 1.7 1.7 0 0 0 8 1.1V1a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 2.9 1.2l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V7a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>',
   cuenta: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 21c1.5-4 4.5-6 8-6s6.5 2 8 6"/></svg>',
   sync: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 0 1-15.4 6.4L3 16"/><path d="M3 12a9 9 0 0 1 15.4-6.4L21 8"/><path d="M21 3v5h-5M3 21v-5h5"/></svg>',
+  atras: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>',
+  derecha: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>',
+  check: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>',
+  cruz: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6L6 18M6 6l12 12"/></svg>',
+  menos: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M5 12h14"/></svg>',
+  sube: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg>',
+  baja: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M19 12l-7 7-7-7"/></svg>',
+  pin: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21s-7-6.2-7-11.5a7 7 0 0 1 14 0C19 14.8 12 21 12 21z"/><circle cx="12" cy="9.5" r="2.5"/></svg>',
+  descarga: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12M7 10l5 5 5-5M4 21h16"/></svg>',
+  buscar: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>',
+  alerta: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9L1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/></svg>',
+  nube: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 10h-1.3A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"/></svg>',
   camara: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h3l2-3h6l2 3h3v13H4z"/><circle cx="12" cy="13" r="4"/></svg>'
 };
+
+/* ================================================================ anillo de puntaje */
+
+// Anillo que se llena según el puntaje; el color marca la escala.
+function anillo(score, tam = 's') {
+  const e = escala(score);
+  const pct = score == null ? 0 : Math.max(0, Math.min(100, score));
+  const r = 20, c = 2 * Math.PI * r;
+  const txt = score == null ? 'S/D' : (score >= 100 ? '100' : fmt(score));
+  const label = score == null ? 'Sin dato' : `${fmt(score)} puntos, ${ESCALAS[e]}`;
+  return `<span class="anillo ${tam} ${e}" role="img" aria-label="${label}">
+    <svg viewBox="0 0 48 48" aria-hidden="true"><circle class="pista" cx="24" cy="24" r="${r}"/>
+    <circle class="arco" cx="24" cy="24" r="${r}" stroke-dasharray="${(pct / 100 * c).toFixed(2)} ${c.toFixed(2)}"/></svg>
+    <b>${txt}</b></span>`;
+}
+const chipEscala = e => `<span class="chip-escala ${e}">${ESCALAS[e]}</span>`;
 
 /* ================================================================ estado */
 
@@ -247,7 +277,7 @@ const fotoUrl = driveId => `${API}/api/foto/${encodeURIComponent(driveId)}?t=${e
 
 /* ================================================================ sincronización */
 
-const nombreLocal = id => S.cat?.stores.find(s => s.id === id)?.name || `Local ${id}`;
+const nombreLocal = id => nom(S.cat?.stores.find(s => s.id === id)?.name) || `Local ${id}`;
 
 async function sincronizar() {
   if (S.syncing || !navigator.onLine || !S.token) return;
@@ -334,7 +364,7 @@ function pintar(v) {
     app.innerHTML = `
       <header class="top">
         ${v.atras
-          ? `<a class="top-btn" href="${v.atras}" aria-label="Volver">‹</a>`
+          ? `<a class="top-btn" href="${v.atras}" aria-label="Volver">${ICON.atras}</a>`
           : logo('marca', 'blanco')}
         <h1>${esc(v.titulo)}</h1>
         <a class="top-btn" href="#/pendientes" aria-label="Relevamientos pendientes de enviar">${ICON.sync}<span class="badge" id="sync-badge" hidden></span></a>
@@ -347,7 +377,7 @@ function pintar(v) {
   actualizarBadge();
 }
 
-const cargando = () => $('#app .vista') ? ($('#app .vista').innerHTML = '<div class="cargando">Cargando…</div>') : null;
+const cargando = () => $('#app .vista') ? ($('#app .vista').innerHTML = '<div class="cargando" aria-label="Cargando"></div>') : null;
 
 /* ================================================================ router */
 
@@ -397,8 +427,8 @@ function vLogin() {
   return {
     sinNav: true,
     html: `
-      <div class="login">
-        <div class="login-marca">${logo('logo-grande')}<p>Relevamientos de locales</p></div>
+      <div class="login-fondo"><div class="login">
+        <div class="login-marca">${logo('logo-grande', 'blanco')}<p>Relevamientos de locales</p></div>
         <form id="f-login" class="card form" novalidate>
           <label>Email<input name="email" type="email" inputmode="email" autocomplete="username" required data-email></label>
           ${campoClave('Clave', 'clave', 'autocomplete="current-password" required')}
@@ -406,7 +436,7 @@ function vLogin() {
           <button class="btn primario" type="submit">Ingresar</button>
         </form>
         <a class="link-sutil" href="#/instalar">¿Primera vez? Configurar la app</a>
-      </div>`,
+      </div></div>`,
     montar() {
       $('#f-login').onsubmit = async e => {
         e.preventDefault();
@@ -432,8 +462,8 @@ function vInstalar() {
   return {
     sinNav: true,
     html: `
-      <div class="login">
-        <div class="login-marca">${logo('logo-grande')}<p>Crear el primer administrador</p></div>
+      <div class="login-fondo"><div class="login">
+        <div class="login-marca">${logo('logo-grande', 'blanco')}<p>Crear el primer administrador</p></div>
         <form id="f-setup" class="card form" novalidate>
           ${campoClave('Clave de instalación', 'ci', 'autocomplete="off" required')}
           <label>Tu nombre<input name="nombre" autocomplete="name" required></label>
@@ -443,7 +473,7 @@ function vInstalar() {
           <button class="btn primario" type="submit">Crear administrador</button>
         </form>
         <a class="link-sutil" href="#/login">Ya tengo usuario</a>
-      </div>`,
+      </div></div>`,
     montar() {
       $('#f-setup').onsubmit = async e => {
         e.preventDefault();
@@ -468,19 +498,20 @@ function vInstalar() {
 function filaLocal(l, conBoton = false) {
   const e = l.escala || escala(l.score);
   const delta = (l.score != null && l.prev_score != null) ? Math.round((l.score - l.prev_score) * 10) / 10 : null;
-  const deltaHtml = delta ? `<span class="delta ${delta > 0 ? 'sube' : 'baja'}">${delta > 0 ? '▲' : '▼'} ${fmt(Math.abs(delta))}</span>` : '';
+  const deltaHtml = delta ? `<span class="delta ${delta > 0 ? 'sube' : 'baja'}">${delta > 0 ? ICON.sube : ICON.baja}${fmt(Math.abs(delta))}</span>` : '';
   const detalle = l.score == null && l.prev_score != null
     ? `Anterior ${fmt(l.prev_score)}`
     : (l.supervisor_name || l.code);
   return `
     <div class="fila">
-      <a href="#/local/${l.id}" style="display:contents">
-        <span class="nota ${e}">${fmt(l.score)}</span>
-        <span class="fila-txt"><strong>${esc(l.name)}</strong><small>${esc(l.code)} · ${esc(detalle)}</small></span>
+      <a href="#/local/${l.id}" class="fila-link">
+        ${anillo(l.score)}
+        <span class="fila-txt"><strong>${esc(nom(l.name))}</strong><small>${esc(l.code)} · ${esc(detalle)}</small></span>
+        ${conBoton ? '' : `<span class="fila-der">${deltaHtml}<span class="flecha">${ICON.derecha}</span></span>`}
       </a>
       ${conBoton
-        ? `<a class="btn chico ${l.score == null ? 'dulce' : ''}" href="#/relevar/${l.id}">${l.score == null ? 'Relevar' : 'Volver a relevar'}</a>`
-        : `<span class="fila-der">${deltaHtml}</span>`}
+        ? `<a class="btn chico ${l.score == null ? 'primario' : ''}" href="#/relevar/${l.id}">${l.score == null ? 'Relevar' : 'Repetir'}</a>`
+        : ''}
     </div>`;
 }
 
@@ -491,7 +522,7 @@ async function avisosBorradores() {
     const n = Object.values(x.resp).filter(r => r.valor).length;
     return `<a class="aviso" href="#/relevar/${x.store_id}">
       <div><strong>${esc(nombreLocal(x.store_id))}</strong><span class="sub">Relevamiento sin terminar, ${n} ítems respondidos</span></div>
-      <span class="btn chico">Continuar</span></a>`;
+      <span class="btn chico primario">Continuar</span></a>`;
   }).join('');
 }
 
@@ -514,15 +545,17 @@ async function vInicio() {
   return {
     titulo: 'Inicio',
     html: `
-      <div class="saludo">
-        <h2>Hola, ${esc(primerNombre(S.user.name))}</h2>
-        <p class="sub">${mesLabel(periodo)}${offline ? '. Sin conexión: mostrando tus locales guardados.' : ''}</p>
-      </div>
-      ${offline ? '' : `
-      <div class="card avance">
-        <div class="avance-num">${hechos}<small> de ${locales.length} locales relevados</small></div>
-        <div class="barra"><span style="width:${pct}%"></span></div>
-      </div>`}
+      <section class="hero">
+        <p class="hero-sub">${mesLabel(periodo)}</p>
+        <h2 class="hero-titulo">Hola, ${esc(primerNombre(S.user.name))}</h2>
+        ${offline
+          ? `<p class="hero-nota">${ICON.nube}Sin conexión. Podés relevar igual: se envía cuando vuelva la señal.</p>`
+          : `<div class="hero-avance">
+              <span class="hero-num">${hechos}<small>/${locales.length}</small></span>
+              <span class="hero-lbl">locales relevados este mes</span>
+            </div>
+            <div class="barra clara"><span style="width:${pct}%"></span></div>`}
+      </section>
       ${await avisosBorradores()}
       ${locales.length === 0 ? `
         <div class="vacio"><p>Todavía no tenés locales asignados. Pedile al administrador que te los asigne, o buscá cualquier local en la pestaña Locales.</p>
@@ -560,7 +593,7 @@ async function vLocales() {
     if (estado.orden === 'peor') {
       l.sort((a, b) => (a.score ?? 999) - (b.score ?? 999) || (a.prev_score ?? 999) - (b.prev_score ?? 999));
     } else {
-      l.sort((a, b) => a.name.localeCompare(b.name, 'es'));
+      l.sort((a, b) => nom(a.name).localeCompare(nom(b.name), 'es'));
     }
     $('#lista-locales').innerHTML = l.length
       ? `<div class="lista">${l.map(x => filaLocal(x, x.ajeno)).join('')}</div>`
@@ -575,7 +608,7 @@ async function vLocales() {
     html: `
       ${offline ? '<p class="sub">Sin conexión: mostrando el catálogo guardado, sin puntajes.</p>' : ''}
       <div class="buscador">
-        <input type="search" id="q" placeholder="Buscar por nombre, código o supervisor" autocomplete="off">
+        <label class="buscar">${ICON.buscar}<input type="search" id="q" placeholder="Buscar por nombre, código o supervisor" autocomplete="off" aria-label="Buscar locales"></label>
         <div class="chips" id="chips">
           <button class="chip activo" data-f="todos">Todos</button>
           ${ORDEN_ESCALAS.map(k => `<button class="chip" data-f="${k}">${ESCALAS[k]} ${cuenta(k)}</button>`).join('')}
@@ -615,20 +648,19 @@ async function vLocal(id) {
     titulo: l.code,
     atras: '#/locales',
     html: `
-      <div class="card">
-        <div class="ficha">
+      <section class="hero">
+        <div class="hero-ficha">
           <div>
-            <h2>${esc(l.name)}</h2>
-            <p class="sub">${esc(l.supervisor_name || 'Sin supervisor asignado')}</p>
-            <p class="sub">${ult ? `Último relevamiento: ${fecha(ult.fecha)}${deEsteMes ? '' : ' (mes anterior)'}` : 'Nunca relevado'}</p>
+            <p class="hero-sub">${esc(l.code)}</p>
+            <h2 class="hero-titulo">${esc(nom(l.name))}</h2>
+            <p class="hero-meta">${esc(l.supervisor_name || 'Sin supervisor asignado')}</p>
+            <p class="hero-meta">${ult ? `Último relevamiento ${fecha(ult.fecha)}${deEsteMes ? '' : ', mes anterior'}` : 'Nunca relevado'}</p>
+            ${chipEscala(e)}
           </div>
-          <div class="puntaje-grande">
-            <div class="n txt-${e}">${fmt(ult?.score)}</div>
-            <div class="l txt-${e}">${ESCALAS[e]}</div>
-          </div>
+          ${anillo(ult?.score, 'l')}
         </div>
-        <a class="btn dulce ancho" style="margin-top:16px" href="#/relevar/${l.id}">Relevar ahora</a>
-      </div>
+        <a class="btn blanco ancho" href="#/relevar/${l.id}">Relevar ahora</a>
+      </section>
 
       ${d.capitulos.length ? `
       <div class="bloque">
@@ -647,8 +679,9 @@ async function vLocal(id) {
         <h2>Historial</h2>
         ${d.historial.length ? `<div class="lista">${d.historial.map(h => `
           <a class="fila" href="#/rel/${h.id}">
-            <span class="nota ${h.escala}">${fmt(h.score)}</span>
+            ${anillo(h.score)}
             <span class="fila-txt"><strong>${mesLabel(h.period)}</strong><small>${fecha(h.fecha)} · ${esc(h.usuario)}${h.distance_m > DISTANCIA_MAX ? ` · a ${fmtDist(h.distance_m)} del local` : ''}</small></span>
+            <span class="fila-der"><span class="flecha">${ICON.derecha}</span></span>
           </a>`).join('')}</div>` : '<div class="vacio"><p>Este local todavía no tiene relevamientos.</p></div>'}
       </div>`
   };
@@ -678,8 +711,8 @@ async function vRelevar(storeId) {
       <div class="item" data-item="${i.id}">
         <p>${esc(i.text)}${i.critical ? '<span class="tag-crit">Crítico</span>' : ''}</p>
         <div class="opciones" role="group" aria-label="Respuesta">
-          <button type="button" data-v="ok" class="op ok ${r.valor === 'ok' ? 'sel' : ''}" aria-pressed="${r.valor === 'ok'}">Cumple</button>
-          <button type="button" data-v="fail" class="op fail ${r.valor === 'fail' ? 'sel' : ''}" aria-pressed="${r.valor === 'fail'}">No cumple</button>
+          <button type="button" data-v="ok" class="op ok ${r.valor === 'ok' ? 'sel' : ''}" aria-pressed="${r.valor === 'ok'}">${ICON.check}Cumple</button>
+          <button type="button" data-v="fail" class="op fail ${r.valor === 'fail' ? 'sel' : ''}" aria-pressed="${r.valor === 'fail'}">${ICON.cruz}No cumple</button>
           <button type="button" data-v="na" class="op na ${r.valor === 'na' ? 'sel' : ''}" aria-pressed="${r.valor === 'na'}">N/A</button>
         </div>
         <div class="item-extra">
@@ -701,8 +734,7 @@ async function vRelevar(storeId) {
     const n = items.filter(i => b.resp[i.id]?.valor).length;
     const el = $('#live-score');
     if (!el) return;
-    el.textContent = fmt(s);
-    el.className = 'nota ' + escala(s);
+    el.innerHTML = anillo(s, 'm');
     $('#live-prog').textContent = `${n} de ${items.length}`;
     $('#live-bar').style.width = `${Math.round(n / items.length * 100)}%`;
     for (const c of caps) {
@@ -721,7 +753,7 @@ async function vRelevar(storeId) {
       const d = document.createElement('div');
       d.className = 'thumb';
       const url = URL.createObjectURL(f.blob);
-      d.innerHTML = `<img src="${url}" alt="Foto del ítem"><button type="button" aria-label="Quitar foto">×</button>`;
+      d.innerHTML = `<img src="${url}" alt="Foto del ítem"><button type="button" aria-label="Quitar foto">${ICON.cruz}</button>`;
       d.querySelector('button').onclick = () => {
         b.fotos = b.fotos.filter(x => x.pid !== f.pid);
         guardarBorrador();
@@ -737,8 +769,8 @@ async function vRelevar(storeId) {
     html: `
       <div class="rel-head">
         <div class="rel-head-row">
-          <div><strong>${esc(local.name)}</strong><small id="geo">Buscando ubicación…</small></div>
-          <div class="rel-score"><span id="live-score" class="nota sd">S/D</span><small class="sub num" id="live-prog"></small></div>
+          <div><strong>${esc(nom(local.name))}</strong><small id="geo">${ICON.pin}Buscando ubicación…</small><small class="num prog" id="live-prog"></small></div>
+          <div class="rel-score" id="live-score">${anillo(null, 'm')}</div>
         </div>
         <div class="barra" style="height:4px;margin-top:8px"><span id="live-bar"></span></div>
       </div>
@@ -752,7 +784,7 @@ async function vRelevar(storeId) {
           <textarea id="notas" placeholder="Algo que el local tenga que saber o corregir">${esc(b.notas)}</textarea>
         </label>
         <button class="btn primario ancho" id="guardar">Guardar relevamiento</button>
-        <button class="btn ancho" id="descartar">Descartar este relevamiento</button>
+        <button class="btn ancho fantasma" id="descartar">Descartar este relevamiento</button>
       </div>`,
     montar(app) {
       // los eventos van sobre .vista (se recrea en cada pantalla) para no acumular listeners
@@ -805,7 +837,7 @@ async function vRelevar(storeId) {
       // Ubicación
       const geo = $('#geo');
       if (!navigator.geolocation) {
-        geo.textContent = 'Este dispositivo no da ubicación';
+        geo.innerHTML = ICON.pin + 'Este dispositivo no da ubicación';
       } else {
         navigator.geolocation.getCurrentPosition(pos => {
           b.lat = pos.coords.latitude;
@@ -813,13 +845,13 @@ async function vRelevar(storeId) {
           guardarBorrador();
           if (local.lat != null && local.lng != null) {
             const d = distancia(b.lat, b.lng, local.lat, local.lng);
-            geo.textContent = d > DISTANCIA_MAX ? `Estás a ${fmtDist(d)} del local` : 'Estás en el local';
+            geo.innerHTML = ICON.pin + (d > DISTANCIA_MAX ? `Estás a ${fmtDist(d)} del local` : 'Estás en el local');
             geo.classList.toggle('lejos', d > DISTANCIA_MAX);
           } else {
-            geo.textContent = 'Ubicación registrada';
+            geo.innerHTML = ICON.pin + 'Ubicación registrada';
           }
         }, () => {
-          geo.textContent = 'Sin ubicación: el permiso está bloqueado';
+          geo.innerHTML = ICON.pin + 'Sin ubicación: el permiso está bloqueado';
           geo.classList.add('lejos');
         }, { enableHighAccuracy: true, timeout: 15000, maximumAge: 60000 });
       }
@@ -874,12 +906,12 @@ async function vPendientes() {
     titulo: 'Pendientes de enviar',
     atras: '#/',
     html: `
-      ${!cola.length && !borr.length ? '<div class="vacio"><p>Está todo enviado.</p><a class="btn" href="#/">Ir al inicio</a></div>' : ''}
+      ${!cola.length && !borr.length ? `<div class="vacio"><span class="vacio-ico">${ICON.check}</span><p>Está todo enviado.</p><a class="btn" href="#/">Ir al inicio</a></div>` : ''}
       ${cola.length ? `
         <div class="lista">${cola.map(r => {
           const subidas = r.fotos.filter(f => f.subida).length;
           return `<div class="fila">
-            <span class="nota ${escala(r.score)}">${fmt(r.score)}</span>
+            ${anillo(r.score)}
             <span class="fila-txt"><strong>${esc(nombreLocal(r.store_id))}</strong>
               <small>${fecha(r.creado)} · ${r.subido ? 'Respuestas enviadas' : 'Respuestas sin enviar'} · Fotos ${subidas} de ${r.fotos.length}</small>
               ${r.error ? `<small class="error">${esc(r.error)}</small>` : ''}
@@ -912,7 +944,7 @@ async function vRelevamiento(id) {
   const fallas = d.respuestas.filter(x => x.value === 'fail');
   const respHtml = x => `
     <div class="resp">
-      <div class="resp-top"><span class="ico ${x.value}">${x.value === 'ok' ? '✓' : x.value === 'fail' ? '✕' : '–'}</span>
+      <div class="resp-top"><span class="ico ${x.value}">${x.value === 'ok' ? ICON.check : x.value === 'fail' ? ICON.cruz : ICON.menos}</span>
         <p>${esc(x.text)}${x.critical ? '<span class="tag-crit">Crítico</span>' : ''}</p></div>
       ${x.comment ? `<p class="coment">${esc(x.comment)}</p>` : ''}
       ${fotosDe(x.item_id).length ? `<div class="thumbs">${fotosDe(x.item_id).map(f =>
@@ -925,17 +957,19 @@ async function vRelevamiento(id) {
     titulo: mesLabel(r.period),
     atras: `#/local/${r.store_id}`,
     html: `
-      <div class="card">
-        <div class="ficha">
+      <section class="hero">
+        <div class="hero-ficha">
           <div>
-            <h2>${esc(r.store_name)}</h2>
-            <p class="sub">${fecha(r.client_created_at)} por ${esc(r.usuario)}</p>
-            ${r.distance_m > DISTANCIA_MAX ? `<p class="sub txt-urgente"><b>Cargado a ${fmtDist(r.distance_m)} del local</b></p>` : ''}
+            <p class="hero-sub">${esc(r.code)}</p>
+            <h2 class="hero-titulo">${esc(nom(r.store_name))}</h2>
+            <p class="hero-meta">${fecha(r.client_created_at)} por ${esc(r.usuario)}</p>
+            ${r.distance_m > DISTANCIA_MAX ? `<p class="hero-alerta">${ICON.alerta}Cargado a ${fmtDist(r.distance_m)} del local</p>` : ''}
+            ${chipEscala(r.escala)}
           </div>
-          <div class="puntaje-grande"><div class="n txt-${r.escala}">${fmt(r.score)}</div><div class="l txt-${r.escala}">${ESCALAS[r.escala]}</div></div>
+          ${anillo(r.score, 'l')}
         </div>
-        ${r.notes ? `<p style="margin:14px 0 0">${esc(r.notes)}</p>` : ''}
-      </div>
+        ${r.notes ? `<p class="hero-notas">${esc(r.notes)}</p>` : ''}
+      </section>
       <div class="bloque"><h2>Por capítulo</h2><div class="card">
         ${d.capitulos.map(c => `<div class="cap-fila"><span>${esc(c.nombre)}</span><b class="txt-${c.escala}">${fmt(c.score)}</b>
           <div class="barra"><span class="${c.escala}" style="width:${c.score ?? 0}%"></span></div></div>`).join('')}
@@ -960,9 +994,9 @@ async function vResumen() {
 
   const listaCorta = arr => arr.length ? `<div class="lista">${arr.map(l => `
     <a class="fila" href="#/local/${l.id}">
-      <span class="nota ${l.escala}">${fmt(l.score)}</span>
-      <span class="fila-txt"><strong>${esc(l.name)}</strong><small>${esc(l.code)} · ${esc(l.supervisor_name || 'Sin supervisor')}</small></span>
-      ${l.delta != null ? `<span class="delta baja">▼ ${fmt(Math.abs(l.delta))}</span>` : ''}
+      ${anillo(l.score)}
+      <span class="fila-txt"><strong>${esc(nom(l.name))}</strong><small>${esc(l.code)} · ${esc(l.supervisor_name || 'Sin supervisor')}</small></span>
+      <span class="fila-der">${l.delta != null ? `<span class="delta baja">${ICON.baja}${fmt(Math.abs(l.delta))}</span>` : ''}<span class="flecha">${ICON.derecha}</span></span>
     </a>`).join('')}</div>` : '<div class="card sub">Sin datos para este mes.</div>';
 
   return {
@@ -970,28 +1004,32 @@ async function vResumen() {
     html: `
       <div class="periodo">
         <input type="month" id="periodo" value="${p}" max="${periodoActual()}" aria-label="Mes">
-        <a class="btn chico" href="${API}/api/exportar?periodo=${p}&t=${encodeURIComponent(S.token)}" download>Exportar a Excel</a>
+        <a class="btn chico" href="${API}/api/exportar?periodo=${p}&t=${encodeURIComponent(S.token)}" download>${ICON.descarga}Exportar a Excel</a>
       </div>
 
-      <div class="titular">
-        <div>
-          <div class="n txt-${escala(d.promedio)}">${fmt(d.promedio)}</div>
-          <div class="l">Promedio</div>
-          <div class="s">De los locales relevados</div>
+      <section class="hero">
+        <div class="hero-resumen">
+          <div class="hero-bloque">
+            ${anillo(d.promedio, 'l')}
+            <div><span class="hero-lbl">Promedio</span>${chipEscala(escala(d.promedio))}</div>
+          </div>
+          <div class="hero-bloque">
+            <div class="hero-cob">
+              <span class="hero-num">${d.relevados}<small>/${d.total}</small></span>
+              <span class="hero-lbl">locales relevados</span>
+              <div class="barra clara"><span style="width:${d.cobertura}%"></span></div>
+              <span class="hero-lbl">${fmt(d.cobertura)}% de cobertura</span>
+            </div>
+          </div>
         </div>
-        <div>
-          <div class="n">${d.relevados}<small> de ${d.total}</small></div>
-          <div class="l">Relevados</div>
-          <div class="s">${fmt(d.cobertura)}% de cobertura</div>
-        </div>
-        ${d.cobertura < 80 && d.total ? `<div class="advertencia">El promedio solo refleja ${d.relevados} locales. ${d.total - d.relevados} todavía no se relevaron en ${mesLabel(p).toLowerCase()}.</div>` : ''}
-      </div>
+        ${d.cobertura < 80 && d.total ? `<p class="hero-alerta">${ICON.alerta}El promedio solo refleja ${d.relevados} locales. ${d.total - d.relevados} todavía no se relevaron en ${mesLabel(p).toLowerCase()}.</p>` : ''}
+      </section>
 
       <div class="bloque">
         <h2>Cómo están los locales</h2>
         <div class="card">
           <div class="dist">${ORDEN_ESCALAS.map(k => d.escalas[k] ? `<span class="${k}" style="width:${d.escalas[k] / tot * 100}%" title="${ESCALAS[k]}: ${d.escalas[k]}"></span>` : '').join('')}</div>
-          <div class="leyenda">${ORDEN_ESCALAS.map(k => `<div><i style="background:var(--${k === 'sd' ? 'linea' : k})"></i>${ESCALAS[k]}<b>${d.escalas[k]}</b></div>`).join('')}</div>
+          <div class="leyenda">${ORDEN_ESCALAS.map(k => `<div><i class="${k}"></i>${ESCALAS[k]}<b>${d.escalas[k]}</b></div>`).join('')}</div>
         </div>
       </div>
 
@@ -1002,41 +1040,36 @@ async function vResumen() {
             <div class="tend-col"><div class="tend-bar" style="height:${t.relevados / maxTend * 100}%">
               ${['aprobado', 'observado', 'urgente', 'critico'].map(k => t[k] ? `<span style="flex:${t[k]};background:var(--${k})"></span>` : '').join('')}
             </div></div>`).join('')}</div>
-          <div class="tend-lbl">${d.tendencia.map(t => `<div>${mesCorto(t.periodo)}<b>${t.promedio == null ? '–' : fmt(t.promedio)}</b>${t.relevados} loc.</div>`).join('')}</div>
+          <div class="tend-lbl">${d.tendencia.map(t => `<div><span>${mesCorto(t.periodo)}</span><b>${t.promedio == null ? '–' : fmt(t.promedio)}</b>${t.relevados} loc.</div>`).join('')}</div>
         </div>
       </div>
 
       <div class="bloque">
         <h2>Supervisores</h2>
-        <div class="card scroll-x">
-          <table class="tabla">
-            <thead><tr><th>Supervisor</th><th class="der">Relevados</th><th>Cumplimiento</th><th class="der">Promedio</th></tr></thead>
-            <tbody>${d.supervisores.map(s => `
-              <tr>
-                <td>${esc(s.nombre)}</td>
-                <td class="der">${s.relevados} de ${s.asignados}</td>
-                <td><span class="mini-barra"><span style="width:${s.cumplimiento}%"></span></span><span class="num">${Math.round(s.cumplimiento)}%</span></td>
-                <td class="der txt-${escala(s.promedio)}"><b>${fmt(s.promedio)}</b></td>
-              </tr>`).join('')}</tbody>
-          </table>
+        <div class="card">${d.supervisores.map(s => `
+          <div class="sup-fila">
+            <strong>${esc(s.nombre)}</strong>
+            <span class="sup-prom"><span class="punto ${escala(s.promedio)}"></span>${fmt(s.promedio)}</span>
+            <div class="sup-cump"><div class="barra"><span style="width:${s.cumplimiento}%"></span></div>${s.relevados} de ${s.asignados} relevados, ${Math.round(s.cumplimiento)}%</div>
+          </div>`).join('')}
         </div>
       </div>
 
       ${d.atrasados.length ? `
       <div class="bloque">
-        <h2>Sin relevar hace más de un mes (${d.atrasados.length})</h2>
-        <div class="lista">${d.atrasados.map(l => `
+        <details class="lista lista-plegable"><summary>Sin relevar hace más de un mes (${d.atrasados.length})</summary>${d.atrasados.map(l => `
           <a class="fila" href="#/local/${l.id}">
-            <span class="nota sd">S/D</span>
-            <span class="fila-txt"><strong>${esc(l.name)}</strong><small>${esc(l.supervisor_name || 'Sin supervisor')} · ${l.prev_period ? `Último: ${mesLabel(l.prev_period)}` : 'Nunca relevado'}</small></span>
-          </a>`).join('')}</div>
+            ${anillo(null)}
+            <span class="fila-txt"><strong>${esc(nom(l.name))}</strong><small>${esc(l.code)} · ${esc(l.supervisor_name || 'Sin supervisor')} · ${l.prev_period ? `Último: ${mesLabel(l.prev_period)}` : 'Nunca relevado'}</small></span>
+            <span class="fila-der"><span class="flecha">${ICON.derecha}</span></span>
+          </a>`).join('')}</details>
       </div>` : ''}
 
       ${d.bajaron.length ? `<div class="bloque"><h2>Bajaron respecto del relevamiento anterior</h2>${listaCorta(d.bajaron)}</div>` : ''}
 
       <div class="dos-col bloque" style="margin-top:24px">
-        <div><h2 style="font-size:1.05rem;margin:0 0 10px">Peores 10</h2>${listaCorta(d.peores)}</div>
-        <div><h2 style="font-size:1.05rem;margin:0 0 10px">Mejores 10</h2>${listaCorta(d.mejores)}</div>
+        <div><h2 class="h-bloque">Peores 10</h2>${listaCorta(d.peores)}</div>
+        <div><h2 class="h-bloque">Mejores 10</h2>${listaCorta(d.mejores)}</div>
       </div>
 
       <div class="bloque">
@@ -1130,7 +1163,7 @@ PMALE;Lucciano's Alem;Mar del Plata;Propio;Argentina;supervisor@luccianos.com.ar
       </div>
       <div class="bloque"><h2>Locales cargados (${S.cat.stores.length})</h2>
         <div class="lista">${S.cat.stores.map(s => `
-          <div class="fila"><span class="fila-txt"><strong>${esc(s.code)} ${esc(s.name)}</strong>
+          <div class="fila"><span class="fila-txt"><strong>${esc(s.code)} ${esc(nom(s.name))}</strong>
             <small>${esc(s.supervisor_name || 'Sin supervisor')}${s.lat == null ? ' · Sin coordenadas' : ''}</small></span></div>`).join('')}</div>
       </div>`;
     montar = () => {
