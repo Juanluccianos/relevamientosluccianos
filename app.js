@@ -4,7 +4,9 @@
 
 // ↓↓↓ CAMBIAR por la URL de tu Worker (sin barra final)
 const API = 'https://relevamientos-api.lucciano-viaticos.workers.dev';
-const VERSION = '2.0.0';
+const VERSION = '2.1.0';
+const PLAZO_DIAS = 7;          // mismo plazo que el Worker para corregir un incumplimiento
+const PLAZO_DIAS_CRITICO = 2;
 const DISTANCIA_MAX = 300; // metros: más lejos que esto, se marca como "cargado fuera del local"
 
 /* ================================================================ utilidades */
@@ -125,6 +127,11 @@ const ICON = {
   buscar: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>',
   alerta: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9L1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/></svg>',
   nube: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 10h-1.3A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"/></svg>',
+  tareas: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3 8-8"/><path d="M20 12v7a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h9"/></svg>',
+  estrella: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2.5l2.9 6 6.6.9-4.8 4.6 1.2 6.5L12 17.4l-5.9 3.1 1.2-6.5L2.5 9.4l6.6-.9z"/></svg>',
+  pdf: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6M9 14h6M9 17h4"/></svg>',
+  mas: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>',
+  reloj: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>',
   camara: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h3l2-3h6l2 3h3v13H4z"/><circle cx="12" cy="13" r="4"/></svg>'
 };
 
@@ -152,6 +159,8 @@ const S = {
   cat: JSON.parse(localStorage.getItem('rl_cat') || 'null'),
   syncing: false,
   rid: 0,
+  cont: null,       // contador de tareas para el badge
+  filtroTareas: 'abiertas',
   adminTab: 'usuarios'
 };
 
@@ -294,6 +303,7 @@ async function sincronizar() {
           });
           r.subido = true;
           r.score = out.score;
+          r.tareas = out.tareas || 0;
           r.error = null;
           await idb.put('cola', r);
         }
@@ -306,7 +316,8 @@ async function sincronizar() {
           await idb.put('cola', r);
         }
         await idb.del('cola', r.id);
-        toast(`${nombreLocal(r.store_id)}: relevamiento sincronizado`);
+        toast(`${nombreLocal(r.store_id)}: relevamiento enviado${r.tareas ? `, ${r.tareas} ${r.tareas === 1 ? 'tarea nueva' : 'tareas nuevas'}` : ''}`);
+        S.cont = null;
       } catch (e) {
         r.error = e.message;
         await idb.put('cola', r);
@@ -317,6 +328,20 @@ async function sincronizar() {
     actualizarBadge();
     if (location.hash.startsWith('#/pendientes')) render();
   }
+}
+
+async function actualizarContador() {
+  if (!S.token || !navigator.onLine) return pintarContador();
+  try { S.cont = await api('/api/tareas/contador'); } catch { /* sin conexión */ }
+  pintarContador();
+}
+function pintarContador() {
+  const el = $('#badge-tareas');
+  if (!el || !S.cont) return;
+  const n = S.cont.vencidas || 0;
+  el.hidden = n === 0;
+  el.textContent = n > 99 ? '99+' : n;
+  el.title = `${n} tareas vencidas`;
 }
 
 async function actualizarBadge() {
@@ -348,12 +373,12 @@ function nav() {
   const links = [
     ['#/', 'Inicio', ICON.inicio, h === '#/' || h === '#'],
     ['#/locales', 'Locales', ICON.locales, h.startsWith('#/locales') || h.startsWith('#/local/')],
+    ['#/tareas', 'Tareas', ICON.tareas, h.startsWith('#/tarea'), 'tareas'],
     ...(esJefe() ? [['#/resumen', 'Resumen', ICON.resumen, h.startsWith('#/resumen')]] : []),
-    ...(S.user?.role === 'admin' ? [['#/admin', 'Admin', ICON.admin, h.startsWith('#/admin')]] : []),
-    ['#/cuenta', 'Cuenta', ICON.cuenta, h.startsWith('#/cuenta')]
+    ['#/cuenta', 'Cuenta', ICON.cuenta, h.startsWith('#/cuenta') || h.startsWith('#/admin')]
   ];
-  return `<nav class="nav">${links.map(([href, txt, ico, act]) =>
-    `<a href="${href}" class="${act ? 'activo' : ''}" ${act ? 'aria-current="page"' : ''}>${ico}<span>${txt}</span></a>`).join('')}</nav>`;
+  return `<nav class="nav">${links.map(([href, txt, ico, act, extra]) =>
+    `<a href="${href}" class="${act ? 'activo' : ''}" ${act ? 'aria-current="page"' : ''}>${ico}<span>${txt}</span>${extra === 'tareas' ? '<i class="nav-badge" id="badge-tareas" hidden></i>' : ''}</a>`).join('')}</nav>`;
 }
 
 function pintar(v) {
@@ -375,6 +400,8 @@ function pintar(v) {
   window.scrollTo(0, 0);
   v.montar?.(app);
   actualizarBadge();
+  pintarContador();
+  actualizarContador();
 }
 
 const cargando = () => $('#app .vista') ? ($('#app .vista').innerHTML = '<div class="cargando" aria-label="Cargando"></div>') : null;
@@ -392,7 +419,10 @@ const RUTAS = [
   [/^#\/resumen$/, vResumen],
   [/^#\/pendientes$/, vPendientes],
   [/^#\/admin$/, vAdmin],
-  [/^#\/cuenta$/, vCuenta]
+  [/^#\/cuenta$/, vCuenta],
+  [/^#\/tareas$/, vTareas],
+  [/^#\/tareas\/nueva$/, vTareaNueva],
+  [/^#\/tarea\/(\d+)$/, vTarea]
 ];
 
 async function render() {
@@ -675,6 +705,12 @@ async function vLocal(id) {
         </div>
       </div>` : ''}
 
+      ${d.tareas.length ? `
+      <div class="bloque">
+        <h2>Tareas abiertas (${d.tareas.length})</h2>
+        <div class="lista">${d.tareas.map(t => filaTarea({ ...t, store_name: l.name, code: l.code }, true)).join('')}</div>
+      </div>` : ''}
+
       <div class="bloque">
         <h2>Historial</h2>
         ${d.historial.length ? `<div class="lista">${d.historial.map(h => `
@@ -719,6 +755,7 @@ async function vRelevar(storeId) {
           <input type="text" class="coment" placeholder="Comentario (opcional)" value="${esc(r.comentario || '')}">
           <label class="foto-btn">${ICON.camara}Foto<input type="file" accept="image/*" capture="environment" hidden></label>
         </div>
+        <p class="hint-tarea" ${r.valor === 'fail' ? '' : 'hidden'}>${ICON.reloj}Se va a crear una tarea para corregirlo en ${i.critical ? PLAZO_DIAS_CRITICO : PLAZO_DIAS} días</p>
         <div class="thumbs"></div>
       </div>`;
   };
@@ -804,6 +841,7 @@ async function vRelevar(storeId) {
           x.setAttribute('aria-pressed', sel);
         });
         itemEl.classList.remove('falta');
+        $('.hint-tarea', itemEl).hidden = op.dataset.v !== 'fail';
         actualizarPuntaje();
         guardarBorrador();
       });
@@ -970,6 +1008,7 @@ async function vRelevamiento(id) {
         </div>
         ${r.notes ? `<p class="hero-notas">${esc(r.notes)}</p>` : ''}
       </section>
+      <button class="btn primario ancho" id="pdf" style="margin-top:14px">${ICON.pdf}Descargar informe PDF</button>
       <div class="bloque"><h2>Por capítulo</h2><div class="card">
         ${d.capitulos.map(c => `<div class="cap-fila"><span>${esc(c.nombre)}</span><b class="txt-${c.escala}">${fmt(c.score)}</b>
           <div class="barra"><span class="${c.escala}" style="width:${c.score ?? 0}%"></span></div></div>`).join('')}
@@ -977,9 +1016,22 @@ async function vRelevamiento(id) {
       <div class="bloque"><h2>No cumple (${fallas.length})</h2>
         ${fallas.length ? `<div class="card">${fallas.map(respHtml).join('')}</div>` : '<div class="card sub">Sin incumplimientos.</div>'}
       </div>
+      ${d.tareas.length ? `<div class="bloque"><h2>Planes de acción (${d.tareas.length})</h2>
+        <div class="lista">${d.tareas.map(t => filaTarea({ ...t, store_name: r.store_name, code: r.code }, true)).join('')}</div></div>` : ''}
       <div class="bloque"><h2>Relevamiento completo</h2>
         ${Object.entries(porCap).map(([cap, xs]) => `<details class="card" style="margin-bottom:10px"><summary>${esc(cap)}</summary>${xs.map(respHtml).join('')}</details>`).join('')}
-      </div>`
+      </div>`,
+    montar() {
+      $('#pdf').onclick = async e => {
+        const btn = e.currentTarget;
+        btn.disabled = true;
+        btn.innerHTML = `${ICON.pdf}Armando el informe…`;
+        try { await informePDF(d); }
+        catch (err) { toast('No se pudo generar el PDF: ' + err.message); }
+        btn.disabled = false;
+        btn.innerHTML = `${ICON.pdf}Descargar informe PDF`;
+      };
+    }
   };
 }
 
@@ -1034,6 +1086,40 @@ async function vResumen() {
       </div>
 
       <div class="bloque">
+        <h2>Planes de acción</h2>
+        <div class="kpis">
+          <a class="kpi" href="#/tareas"><b>${d.tareas.abiertas}</b><span>Abiertas</span></a>
+          <a class="kpi ${d.tareas.vencidas ? 'mal' : ''}" href="#/tareas" data-filtro="vencidas"><b>${d.tareas.vencidas}</b><span>Vencidas</span></a>
+          <a class="kpi" href="#/tareas" data-filtro="hoy"><b>${d.tareas.vencen_hoy}</b><span>Vencen hoy</span></a>
+          <div class="kpi"><b>${d.tareas.cerradas_mes}</b><span>Cerradas en el mes${d.tareas.cerradas_mes ? `, ${Math.round(d.tareas.cerradas_a_tiempo / d.tareas.cerradas_mes * 100)}% a tiempo` : ''}</span></div>
+        </div>
+        ${d.tareas.por_responsable.length ? `<div class="card" style="margin-top:12px">${d.tareas.por_responsable.map(r => `
+          <div class="sup-fila"><strong>${esc(r.nombre)}</strong>
+            <span class="sup-prom ${r.vencidas ? 'txt-critico' : ''}">${r.vencidas} vencidas</span>
+            <div class="sup-cump">${r.abiertas} abiertas</div></div>`).join('')}</div>` : ''}
+      </div>
+
+      <div class="bloque">
+        <h2>Alertas</h2>
+        ${[
+          ['Estaban mal y no se volvieron a relevar', 'Atención urgente o crítico en el último relevamiento y sin relevar este mes', d.riesgos.criticos_sin_relevar, 'prev'],
+          ['Cayeron a zona de riesgo', 'Tenían 80 o más y ahora quedaron por debajo', d.riesgos.cayeron_a_riesgo, 'delta'],
+          ['Bajaron dos meses seguidos', 'Cada mes peor que el anterior', d.riesgos.caida_sostenida, 'delta'],
+          ['Sin relevar hace más de un mes', 'Ni este mes ni el anterior', d.atrasados, 'prev'],
+          ['Bajaron respecto del relevamiento anterior', 'Cualquier baja de puntaje', d.bajaron, 'delta']
+        ].map(([t, sub, arr, tipo]) => `
+          <details class="lista lista-plegable alerta ${arr.length ? '' : 'vacia'}" ${arr.length ? '' : 'aria-disabled="true"'}>
+            <summary><span class="alerta-n ${arr.length ? '' : 'cero'}">${arr.length}</span><span class="alerta-txt"><strong>${t}</strong><small>${sub}</small></span></summary>
+            ${arr.map(l => `
+              <a class="fila" href="#/local/${l.id}">
+                ${anillo(l.score)}
+                <span class="fila-txt"><strong>${esc(nom(l.name))}</strong><small>${esc(l.code)} · ${esc(l.supervisor_name || 'Sin supervisor')}${tipo === 'prev' ? ` · ${l.prev_period ? `Último: ${mesLabel(l.prev_period)}` : 'Nunca relevado'}` : ''}</small></span>
+                <span class="fila-der">${tipo === 'delta' && l.delta != null ? `<span class="delta baja">${ICON.baja}${fmt(Math.abs(l.delta))}</span>` : (l.prev_score != null && tipo === 'prev' ? `<span class="sub">${fmt(l.prev_score)}</span>` : '')}<span class="flecha">${ICON.derecha}</span></span>
+              </a>`).join('')}
+          </details>`).join('')}
+      </div>
+
+      <div class="bloque">
         <h2>Últimos 6 meses</h2>
         <div class="card">
           <div class="tend">${d.tendencia.map(t => `
@@ -1055,18 +1141,6 @@ async function vResumen() {
         </div>
       </div>
 
-      ${d.atrasados.length ? `
-      <div class="bloque">
-        <details class="lista lista-plegable"><summary>Sin relevar hace más de un mes (${d.atrasados.length})</summary>${d.atrasados.map(l => `
-          <a class="fila" href="#/local/${l.id}">
-            ${anillo(null)}
-            <span class="fila-txt"><strong>${esc(nom(l.name))}</strong><small>${esc(l.code)} · ${esc(l.supervisor_name || 'Sin supervisor')} · ${l.prev_period ? `Último: ${mesLabel(l.prev_period)}` : 'Nunca relevado'}</small></span>
-            <span class="fila-der"><span class="flecha">${ICON.derecha}</span></span>
-          </a>`).join('')}</details>
-      </div>` : ''}
-
-      ${d.bajaron.length ? `<div class="bloque"><h2>Bajaron respecto del relevamiento anterior</h2>${listaCorta(d.bajaron)}</div>` : ''}
-
       <div class="dos-col bloque" style="margin-top:24px">
         <div><h2 class="h-bloque">Peores 10</h2>${listaCorta(d.peores)}</div>
         <div><h2 class="h-bloque">Mejores 10</h2>${listaCorta(d.mejores)}</div>
@@ -1079,6 +1153,8 @@ async function vResumen() {
           : '<div class="card sub">Sin incumplimientos este mes.</div>'}
       </div>`,
     montar() {
+      $$('.kpi[data-filtro]').forEach(k => k.onclick = () => { S.filtroTareas = k.dataset.filtro; });
+      $$('details.alerta.vacia summary').forEach(x => x.onclick = e => e.preventDefault());
       $('#periodo').onchange = e => {
         if (!e.target.value) return;
         S.periodoResumen = e.target.value;
@@ -1092,6 +1168,7 @@ async function vResumen() {
 
 async function vAdmin() {
   if (S.user.role !== 'admin') { location.hash = '#/'; return null; }
+  const volver = '#/cuenta';
   const tab = S.adminTab;
   let html = '';
   let montar = () => {};
@@ -1217,6 +1294,7 @@ Colaboradores;Uniforme completo;2;si</pre>
 
   return {
     titulo: 'Administración',
+    atras: volver,
     html: `
       <div class="tabs" role="tablist">
         ${[['usuarios', 'Usuarios'], ['locales', 'Locales'], ['checklist', 'Checklist']].map(([k, t]) =>
@@ -1230,6 +1308,432 @@ Colaboradores;Uniforme completo;2;si</pre>
   };
 }
 
+/* ================================================================ tareas */
+
+const diasEntre = (a, b) => Math.round((new Date(b + 'T12:00:00') - new Date(a + 'T12:00:00')) / 86400e3);
+const hoyAR = () => new Date(Date.now() - 3 * 3600e3).toISOString().slice(0, 10);
+const fechaCorta = ymd => ymd ? ymd.slice(0, 10).split('-').reverse().slice(0, 2).join('/') : '';
+
+function estadoTarea(t) {
+  if (t.status === 'cerrada') return { cls: 'cerrada', txt: t.closed_at ? `Cerrada el ${fecha(t.closed_at)}` : 'Cerrada' };
+  const d = diasEntre(hoyAR(), t.due_date);
+  if (d < 0) return { cls: 'vencida', txt: `Venció hace ${-d} ${d === -1 ? 'día' : 'días'}` };
+  if (d === 0) return { cls: 'hoy', txt: 'Vence hoy' };
+  return { cls: 'abierta', txt: d === 1 ? 'Vence mañana' : `Vence en ${d} días (${fechaCorta(t.due_date)})` };
+}
+
+function filaTarea(t, sinLocal = false) {
+  const e = estadoTarea(t);
+  return `
+    <a class="fila tarea" href="#/tarea/${t.id}">
+      <span class="t-estado ${e.cls}">${e.cls === 'cerrada' ? ICON.check : e.cls === 'vencida' ? ICON.alerta : ICON.reloj}</span>
+      <span class="fila-txt"><strong>${esc(t.title)}</strong>
+        <small>${sinLocal ? '' : `${esc(nom(t.store_name))} · `}<span class="t-venc ${e.cls}">${e.txt}</span>${t.assignee_name && !sinLocal ? ` · ${esc(t.assignee_name)}` : ''}</small></span>
+      <span class="fila-der">${t.starred ? `<span class="estrella">${ICON.estrella}</span>` : ''}<span class="flecha">${ICON.derecha}</span></span>
+    </a>`;
+}
+
+async function vTareas() {
+  const filtro = S.filtroTareas || 'abiertas';
+  const d = await api(`/api/tareas?estado=${filtro === 'cerradas' ? 'cerradas' : 'abiertas'}`);
+  const todas = d.tareas;
+  const hoy = d.hoy;
+  const responsables = [...new Set(todas.map(t => t.assignee_name).filter(Boolean))].sort();
+  const estado = { q: '', resp: '' };
+  const filtros = [
+    ['abiertas', 'Abiertas', t => true],
+    ['vencidas', 'Vencidas', t => t.due_date < hoy],
+    ['hoy', 'Vencen hoy', t => t.due_date === hoy],
+    ['destacadas', 'Destacadas', t => t.starred],
+    ['cerradas', 'Cerradas', t => true]
+  ];
+  const fn = filtros.find(f => f[0] === filtro)[2];
+
+  const dibujar = () => {
+    const q = estado.q.toLowerCase();
+    const l = todas.filter(t => fn(t)
+      && (!estado.resp || t.assignee_name === estado.resp)
+      && (!q || t.title.toLowerCase().includes(q) || nom(t.store_name).toLowerCase().includes(q) || t.code.toLowerCase().includes(q)));
+    $('#lista-tareas').innerHTML = l.length
+      ? `<div class="lista">${l.slice(0, 300).map(t => filaTarea(t)).join('')}</div>${l.length > 300 ? `<p class="sub" style="text-align:center;margin-top:10px">Mostrando 300 de ${l.length}. Usá el buscador para acotar.</p>` : ''}`
+      : `<div class="vacio"><span class="vacio-ico">${ICON.check}</span><p>${filtro === 'cerradas' ? 'Todavía no hay tareas cerradas.' : 'No hay tareas en esta vista.'}</p></div>`;
+    $('#cuenta-tareas').textContent = `${l.length} ${l.length === 1 ? 'tarea' : 'tareas'}`;
+  };
+
+  return {
+    titulo: 'Tareas',
+    html: `
+      ${esJefe() ? `<a class="btn primario ancho" href="#/tareas/nueva" style="margin-bottom:16px">${ICON.mas}Nueva tarea</a>` : ''}
+      <div class="buscador">
+        <label class="buscar">${ICON.buscar}<input type="search" id="q" placeholder="Buscar por tarea o local" autocomplete="off" aria-label="Buscar tareas"></label>
+        <div class="chips">${filtros.map(([k, t, f]) => `<button class="chip ${k === filtro ? 'activo' : ''}" data-f="${k}">${t}${k !== 'cerradas' && filtro !== 'cerradas' ? ` ${todas.filter(f).length}` : ''}</button>`).join('')}</div>
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:10px">
+          <span class="sub" id="cuenta-tareas"></span>
+          ${esJefe() && responsables.length > 1 ? `<select id="resp" style="width:auto;min-height:38px;max-width:60%"><option value="">Todos los responsables</option>${responsables.map(r => `<option>${esc(r)}</option>`).join('')}</select>` : ''}
+        </div>
+      </div>
+      <div id="lista-tareas"></div>`,
+    montar() {
+      $('#q').oninput = e => { estado.q = e.target.value; dibujar(); };
+      const r = $('#resp');
+      if (r) r.onchange = e => { estado.resp = e.target.value; dibujar(); };
+      $$('.chip[data-f]').forEach(c => c.onclick = () => { S.filtroTareas = c.dataset.f; render(); });
+      dibujar();
+    }
+  };
+}
+
+async function vTarea(id) {
+  const { tarea: t, hallazgo: h } = await api(`/api/tareas/${id}`);
+  const e = estadoTarea(t);
+  let foto = null;
+
+  return {
+    titulo: 'Tarea',
+    atras: '#/tareas',
+    html: `
+      <section class="hero">
+        <p class="hero-sub">${esc(t.code)} · ${esc(nom(t.store_name))}</p>
+        <h2 class="hero-titulo">${esc(t.title)}</h2>
+        <p class="hero-meta">Responsable: ${esc(t.assignee_name || 'Sin asignar')}</p>
+        <p class="hero-meta">${t.origin === 'relevamiento' ? `Surgió del relevamiento del ${fecha(h?.fecha || t.created_at)}` : `Creada por ${esc(t.creator_name || '')} el ${fecha(t.created_at)}`}</p>
+        <div class="hero-chips"><span class="chip-tarea ${e.cls}">${e.txt}</span>
+          <button class="chip-estrella ${t.starred ? 'on' : ''}" id="estrella" aria-pressed="${!!t.starred}">${ICON.estrella}${t.starred ? 'Destacada' : 'Destacar'}</button></div>
+      </section>
+
+      ${t.detail || h ? `
+      <div class="bloque"><h2>${h ? 'Lo que se encontró' : 'Detalle'}</h2>
+        <div class="card">
+          ${t.detail ? `<p style="margin:0">${esc(t.detail)}</p>` : '<p class="sub" style="margin:0">Sin comentario del relevamiento.</p>'}
+          ${h?.fotos.length ? `<div class="thumbs">${h.fotos.map(f => `<div class="thumb"><a href="${fotoUrl(f)}" target="_blank" rel="noopener"><img loading="lazy" src="${fotoUrl(f)}" alt="Foto del hallazgo"></a></div>`).join('')}</div>` : ''}
+          ${h ? `<p class="sub" style="margin-top:12px">Relevado por ${esc(h.usuario || '')}. <a href="#/rel/${t.audit_id}">Ver relevamiento</a></p>` : ''}
+        </div>
+      </div>` : ''}
+
+      ${t.status === 'abierta' ? `
+      <div class="bloque"><h2>Cerrar la tarea</h2>
+        <div class="card form">
+          <label>Qué se hizo<textarea id="nota" placeholder="Por ejemplo: se cambiaron los focos del salón"></textarea></label>
+          <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+            <label class="foto-btn">${ICON.camara}Foto de cómo quedó<input type="file" id="foto" accept="image/*" capture="environment" hidden></label>
+            <div class="thumbs" id="foto-prev"></div>
+          </div>
+          <p class="error" id="err" hidden></p>
+          <button class="btn primario" id="cerrar" ${navigator.onLine ? '' : 'disabled'}>${ICON.check}${navigator.onLine ? 'Marcar como resuelta' : 'Sin conexión'}</button>
+        </div>
+      </div>
+      ${esJefe() ? `
+      <div class="bloque"><h2>Cambiar vencimiento</h2>
+        <div class="card" style="display:flex;gap:10px"><input type="date" id="vence" value="${t.due_date}" style="flex:1"><button class="btn" id="guardar-venc">Guardar</button></div>
+      </div>` : ''}` : `
+      <div class="bloque"><h2>Resolución</h2>
+        <div class="card">
+          <p style="margin:0">${esc(t.close_note || 'Sin comentario.')}</p>
+          ${t.close_drive_id ? `<div class="thumbs"><div class="thumb"><a href="${fotoUrl(t.close_drive_id)}" target="_blank" rel="noopener"><img src="${fotoUrl(t.close_drive_id)}" alt="Foto de la corrección"></a></div></div>` : ''}
+          <p class="sub" style="margin-top:12px">Cerrada ${t.closer_name ? `por ${esc(t.closer_name)} ` : ''}el ${fecha(t.closed_at)}${t.closed_at && hoyAR() && t.closed_at.slice(0, 10) > t.due_date ? ', fuera de plazo' : ''}.</p>
+        </div>
+        ${esJefe() ? `<button class="btn ancho fantasma" id="reabrir" style="margin-top:10px">Reabrir la tarea</button>` : ''}
+      </div>`}`,
+    montar() {
+      $('#estrella').onclick = async () => {
+        try { await post(`/api/tareas/${t.id}`, { destacada: !t.starred }, 'PUT'); render(); }
+        catch (err) { toast(err.message); }
+      };
+      const f = $('#foto');
+      if (f) f.onchange = async ev => {
+        const file = ev.target.files[0];
+        if (!file) return;
+        foto = await comprimir(file);
+        $('#foto-prev').innerHTML = `<div class="thumb"><img src="${URL.createObjectURL(foto)}" alt="Foto"><button type="button" aria-label="Quitar foto">${ICON.cruz}</button></div>`;
+        $('#foto-prev button').onclick = () => { foto = null; $('#foto-prev').innerHTML = ''; };
+      };
+      const c = $('#cerrar');
+      if (c) c.onclick = async () => {
+        const nota = $('#nota').value.trim();
+        if (!nota && !foto) { errorForm('Contá qué se hizo o subí una foto de cómo quedó'); return; }
+        c.disabled = true;
+        c.textContent = 'Guardando…';
+        try {
+          await post(`/api/tareas/${t.id}/cerrar`, { nota, data: foto ? await blobA64(foto) : null });
+          toast('Tarea resuelta');
+          S.cont = null;
+          location.hash = '#/tareas';
+        } catch (err) {
+          errorForm(err.message);
+          c.disabled = false;
+          c.innerHTML = `${ICON.check}Marcar como resuelta`;
+        }
+      };
+      const g = $('#guardar-venc');
+      if (g) g.onclick = async () => {
+        try { await post(`/api/tareas/${t.id}`, { vence: $('#vence').value }, 'PUT'); toast('Vencimiento actualizado'); render(); }
+        catch (err) { toast(err.message); }
+      };
+      const r = $('#reabrir');
+      if (r) r.onclick = async () => {
+        try { await post(`/api/tareas/${t.id}/reabrir`, {}); toast('Tarea reabierta'); render(); }
+        catch (err) { toast(err.message); }
+      };
+    }
+  };
+}
+
+async function vTareaNueva() {
+  if (!esJefe()) { location.hash = '#/tareas'; return null; }
+  if (!S.cat) await cargarCatalogo();
+  const locales = [...S.cat.stores].sort((a, b) => nom(a.name).localeCompare(nom(b.name), 'es'));
+  const sups = [...new Set(locales.map(l => l.supervisor_name).filter(Boolean))].sort();
+  const tipos = [...new Set(locales.map(l => l.type).filter(Boolean))].sort();
+  const paises = [...new Set(locales.map(l => l.country).filter(Boolean))].sort();
+  const elegidos = new Set();
+  const f = { q: '', sup: '', tipo: '', pais: '' };
+  const visibles = () => locales.filter(l =>
+    (!f.q || nom(l.name).toLowerCase().includes(f.q) || l.code.toLowerCase().includes(f.q)) &&
+    (!f.sup || l.supervisor_name === f.sup) && (!f.tipo || l.type === f.tipo) && (!f.pais || l.country === f.pais));
+  const en7 = new Date(Date.now() - 3 * 3600e3 + 7 * 86400e3).toISOString().slice(0, 10);
+
+  const dibujar = () => {
+    const v = visibles();
+    $('#sel-lista').innerHTML = v.map(l => `
+      <label class="sel-fila"><input type="checkbox" value="${l.id}" ${elegidos.has(l.id) ? 'checked' : ''}>
+        <span class="fila-txt"><strong>${esc(nom(l.name))}</strong><small>${esc(l.code)} · ${esc(l.supervisor_name || 'Sin supervisor')}</small></span></label>`).join('')
+      || '<p class="sub" style="padding:14px">Ningún local coincide.</p>';
+    $('#sel-n').textContent = `${elegidos.size} ${elegidos.size === 1 ? 'local elegido' : 'locales elegidos'}`;
+  };
+  const opciones = (arr, todos) => `<option value="">${todos}</option>${arr.map(x => `<option>${esc(x)}</option>`).join('')}`;
+
+  return {
+    titulo: 'Nueva tarea',
+    atras: '#/tareas',
+    html: `
+      <div class="card form">
+        <label>Qué hay que hacer<input id="titulo" placeholder="Por ejemplo: revisión de aires acondicionados" maxlength="300"></label>
+        <label>Detalle (opcional)<textarea id="detalle" placeholder="Instrucciones, a quién llamar, qué foto sacar"></textarea></label>
+        <label>Vence el<input type="date" id="vence" value="${en7}"></label>
+        <label class="check"><input type="checkbox" id="dest"> Destacarla (aparece primero en la lista de cada responsable)</label>
+      </div>
+      <div class="bloque">
+        <h2>En qué locales</h2>
+        <p class="sub" style="margin:-6px 0 12px">Se crea una tarea por local, asignada a su supervisor.</p>
+        <div class="card">
+          <label class="buscar">${ICON.buscar}<input type="search" id="sel-q" placeholder="Buscar local" autocomplete="off" aria-label="Buscar local"></label>
+          <div class="sel-filtros">
+            <select id="sel-sup">${opciones(sups, 'Todos los supervisores')}</select>
+            ${tipos.length ? `<select id="sel-tipo">${opciones(tipos, 'Todos los tipos')}</select>` : ''}
+            ${paises.length > 1 ? `<select id="sel-pais">${opciones(paises, 'Todos los países')}</select>` : ''}
+          </div>
+          <div class="sel-acciones"><button class="btn chico" id="sel-todos">Marcar los de la lista</button><button class="btn chico fantasma" id="sel-ninguno">Desmarcar todos</button><span class="sub" id="sel-n"></span></div>
+          <div class="sel-lista" id="sel-lista"></div>
+        </div>
+      </div>
+      <p class="error" id="err" hidden style="margin-top:14px"></p>
+      <button class="btn primario ancho" id="crear" style="margin-top:16px">${ICON.mas}Crear tareas</button>`,
+    montar() {
+      $('#sel-q').oninput = e => { f.q = e.target.value.toLowerCase(); dibujar(); };
+      $('#sel-sup').onchange = e => { f.sup = e.target.value; dibujar(); };
+      if ($('#sel-tipo')) $('#sel-tipo').onchange = e => { f.tipo = e.target.value; dibujar(); };
+      if ($('#sel-pais')) $('#sel-pais').onchange = e => { f.pais = e.target.value; dibujar(); };
+      $('#sel-todos').onclick = () => { visibles().forEach(l => elegidos.add(l.id)); dibujar(); };
+      $('#sel-ninguno').onclick = () => { elegidos.clear(); dibujar(); };
+      $('#sel-lista').onchange = e => {
+        const id = Number(e.target.value);
+        e.target.checked ? elegidos.add(id) : elegidos.delete(id);
+        $('#sel-n').textContent = `${elegidos.size} ${elegidos.size === 1 ? 'local elegido' : 'locales elegidos'}`;
+      };
+      $('#crear').onclick = async ev => {
+        const titulo = $('#titulo').value.trim();
+        if (!titulo) return errorForm('Escribí qué hay que hacer');
+        if (!$('#vence').value) return errorForm('Elegí la fecha de vencimiento');
+        if (!elegidos.size) return errorForm('Elegí al menos un local');
+        ev.currentTarget.disabled = true;
+        try {
+          const r = await post('/api/tareas', { titulo, detalle: $('#detalle').value, vence: $('#vence').value, destacada: $('#dest').checked, locales: [...elegidos] });
+          toast(`${r.creadas} ${r.creadas === 1 ? 'tarea creada' : 'tareas creadas'}`);
+          S.cont = null;
+          location.hash = '#/tareas';
+        } catch (err) {
+          errorForm(err.message);
+          ev.currentTarget.disabled = false;
+        }
+      };
+      dibujar();
+    }
+  };
+}
+
+/* ================================================================ informe PDF */
+
+let _jspdf = null;
+function cargarJsPDF() {
+  if (window.jspdf?.jsPDF) return Promise.resolve(window.jspdf.jsPDF);
+  if (_jspdf) return _jspdf;
+  _jspdf = new Promise((res, rej) => {
+    const sc = document.createElement('script');
+    sc.src = 'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js';
+    sc.onload = () => res(window.jspdf.jsPDF);
+    sc.onerror = () => { _jspdf = null; rej(new Error('no se pudo cargar el generador, revisá la conexión')); };
+    document.head.appendChild(sc);
+  });
+  return _jspdf;
+}
+
+// Baja la foto de Drive y la achica para que el PDF no pese de más
+async function fotoParaPDF(driveId) {
+  const r = await fetch(fotoUrl(driveId));
+  if (!r.ok) throw new Error('foto');
+  const img = await createImageBitmap(await r.blob());
+  const max = 700, k = Math.min(1, max / Math.max(img.width, img.height));
+  const c = document.createElement('canvas');
+  c.width = Math.round(img.width * k);
+  c.height = Math.round(img.height * k);
+  c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+  return { data: c.toDataURL('image/jpeg', 0.7), w: c.width, h: c.height };
+}
+function imgLocal(src) {
+  return new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = src; });
+}
+// Helvetica del PDF no tiene algunos signos tipográficos: los paso a su versión simple
+const txtPDF = t => String(t ?? '').replace(/[’´`]/g, "'").replace(/[“”]/g, '"').replace(/[•·]/g, '-').replace(/[–—]/g, '-').replace(/…/g, '...');
+
+async function informePDF(d) {
+  const jsPDF = await cargarJsPDF();
+  const r = d.relevamiento;
+  const fallas = d.respuestas.filter(x => x.value === 'fail');
+  const cumple = d.respuestas.filter(x => x.value === 'ok').length;
+  const na = d.respuestas.filter(x => x.value === 'na').length;
+  const tareaDe = itemId => d.tareas.find(t => t.item_id === itemId);
+
+  const logo = await imgLocal('logo-blanco.png').catch(() => null);
+  const fotos = {};
+  for (const f of d.fotos) {
+    if (!fallas.some(x => x.item_id === f.item_id)) continue;
+    (fotos[f.item_id] ||= []);
+    if (fotos[f.item_id].length >= 3) continue;
+    try { fotos[f.item_id].push(await fotoParaPDF(f.drive_id)); } catch { /* si una foto no baja, sigue sin ella */ }
+  }
+
+  const doc = new jsPDF({ unit: 'pt', format: 'a4' });
+  const W = doc.internal.pageSize.getWidth(), H = doc.internal.pageSize.getHeight(), M = 40;
+  const INK = [10, 10, 10], SOFT = [92, 93, 97], MUTE = [150, 151, 156], LINE = [225, 225, 228], PAPER = [244, 244, 245];
+  const COL = { aprobado: [28, 122, 69], observado: [179, 121, 31], urgente: [196, 83, 27], critico: [179, 38, 30], sd: [160, 161, 165] };
+  let y = 0;
+  const salto = need => { if (y + need > H - 50) { doc.addPage(); y = 50; } };
+  const texto = (t, x, yy, o = {}) => doc.text(txtPDF(t), x, yy, o);
+  const lineas = (t, ancho) => doc.splitTextToSize(txtPDF(t), ancho);
+
+  // ---- encabezado
+  doc.setFillColor(...INK); doc.rect(0, 0, W, 132, 'F');
+  if (logo) { const lh = 36, lw = lh * (logo.width / logo.height); doc.addImage(logo, 'PNG', M, 30, lw, lh); }
+  doc.setTextColor(170, 170, 175); doc.setFont('helvetica', 'bold'); doc.setFontSize(8);
+  texto('INFORME DE RELEVAMIENTO', W - M, 40, { align: 'right' });
+  doc.setTextColor(255, 255, 255); doc.setFontSize(18);
+  texto(nom(r.store_name), W - M, 62, { align: 'right' });
+  doc.setTextColor(180, 180, 185); doc.setFont('helvetica', 'normal'); doc.setFontSize(10);
+  texto(`${r.code}  |  ${mesLabel(r.period)}`, W - M, 78, { align: 'right' });
+  doc.setFontSize(9.5);
+  texto(`Relevado el ${fecha(r.client_created_at)} por ${r.usuario}`, M, 110);
+  if (r.distance_m > DISTANCIA_MAX) {
+    doc.setTextColor(241, 185, 90);
+    texto(`Cargado a ${fmtDist(r.distance_m)} del local`, W - M, 110, { align: 'right' });
+  }
+
+  // ---- puntaje
+  y = 160;
+  const col = COL[r.escala];
+  doc.setFillColor(...PAPER); doc.roundedRect(M, y, W - 2 * M, 92, 10, 10, 'F');
+  doc.setFillColor(...col); doc.roundedRect(M, y, 6, 92, 3, 3, 'F');
+  doc.setTextColor(...col); doc.setFont('helvetica', 'bold'); doc.setFontSize(40);
+  texto(fmt(r.score), M + 26, y + 54);
+  doc.setFontSize(11); texto(ESCALAS[r.escala], M + 28, y + 74);
+  const stats = [[cumple, 'Cumplen'], [fallas.length, 'No cumplen'], [na, 'No aplican']];
+  stats.forEach(([n, l], i) => {
+    const x = W - M - 20 - (2 - i) * 92;
+    doc.setTextColor(...INK); doc.setFontSize(22); doc.setFont('helvetica', 'bold');
+    texto(String(n), x, y + 50, { align: 'right' });
+    doc.setTextColor(...SOFT); doc.setFontSize(9); doc.setFont('helvetica', 'normal');
+    texto(l, x, y + 66, { align: 'right' });
+  });
+  y += 122;
+
+  // ---- capítulos
+  doc.setTextColor(...INK); doc.setFont('helvetica', 'bold'); doc.setFontSize(13);
+  texto('Resultado por capítulo', M, y); y += 20;
+  d.capitulos.forEach(c => {
+    salto(30);
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(10); doc.setTextColor(...INK);
+    texto(c.nombre + (c.fallas ? `  (${c.fallas} ${c.fallas === 1 ? 'falla' : 'fallas'})` : ''), M, y);
+    doc.setFont('helvetica', 'bold'); doc.setTextColor(...COL[c.escala]);
+    texto(fmt(c.score), W - M, y, { align: 'right' });
+    doc.setFillColor(...LINE); doc.roundedRect(M, y + 6, W - 2 * M, 5, 2.5, 2.5, 'F');
+    if (c.score) { doc.setFillColor(...COL[c.escala]); doc.roundedRect(M, y + 6, (W - 2 * M) * c.score / 100, 5, 2.5, 2.5, 'F'); }
+    y += 28;
+  });
+
+  // ---- incumplimientos
+  y += 12; salto(60);
+  doc.setTextColor(...INK); doc.setFont('helvetica', 'bold'); doc.setFontSize(13);
+  texto(fallas.length ? `Qué hay que corregir (${fallas.length})` : 'Sin incumplimientos', M, y); y += 18;
+  fallas.forEach(x => {
+    // el ancho de cada renglón depende de la letra: se fija antes de partir el texto
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(10.5);
+    const ls = lineas(x.text, W - 2 * M - 24);
+    doc.setFont('helvetica', 'italic'); doc.setFontSize(9.5);
+    const cm = x.comment ? lineas(x.comment, W - 2 * M - 24) : [];
+    const fs = fotos[x.item_id] || [];
+    const t = tareaDe(x.item_id);
+    const alto = 16 + ls.length * 13 + 14 + cm.length * 12 + (fs.length ? 118 : 0) + (t ? 16 : 0) + 10;
+    salto(alto);
+    const y0 = y;
+    doc.setFillColor(...COL.critico); doc.rect(M, y0, 3, alto - 10, 'F');
+    y += 12;
+    doc.setTextColor(...INK); doc.setFont('helvetica', 'bold'); doc.setFontSize(10.5);
+    doc.text(ls, M + 14, y); y += ls.length * 13;
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(8.5); doc.setTextColor(...MUTE);
+    texto(x.capitulo + (x.critical ? '  |  ITEM CRITICO' : ''), M + 14, y); y += 14;
+    if (cm.length) { doc.setTextColor(...SOFT); doc.setFont('helvetica', 'italic'); doc.setFontSize(9.5); doc.text(cm, M + 14, y); y += cm.length * 12; }
+    if (fs.length) {
+      let x0 = M + 14;
+      fs.forEach(f => {
+        const h = 108, w = Math.min(160, h * f.w / f.h);
+        doc.addImage(f.data, 'JPEG', x0, y + 2, w, h);
+        x0 += w + 8;
+      });
+      y += 118;
+    }
+    if (t) {
+      doc.setFont('helvetica', 'bold'); doc.setFontSize(9); doc.setTextColor(...INK);
+      texto(t.status === 'cerrada' ? `Tarea resuelta el ${fecha(t.closed_at)}` : `Corregir antes del ${fechaCorta(t.due_date)}/${t.due_date.slice(0, 4)}${t.assignee_name ? `  |  Responsable: ${t.assignee_name}` : ''}`, M + 14, y + 4);
+      y += 16;
+    }
+    y += 12;
+  });
+
+  // ---- observaciones
+  if (r.notes) {
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(10);
+    const ls = lineas(r.notes, W - 2 * M - 28);
+    salto(40 + ls.length * 13);
+    y += 6;
+    doc.setTextColor(...INK); doc.setFont('helvetica', 'bold'); doc.setFontSize(13);
+    texto('Observaciones generales', M, y); y += 12;
+    doc.setFillColor(...PAPER); doc.roundedRect(M, y, W - 2 * M, ls.length * 13 + 20, 8, 8, 'F');
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(10); doc.setTextColor(...SOFT);
+    doc.text(ls, M + 14, y + 17); y += ls.length * 13 + 30;
+  }
+
+  // ---- pie de página
+  const n = doc.internal.getNumberOfPages();
+  for (let i = 1; i <= n; i++) {
+    doc.setPage(i);
+    doc.setDrawColor(...LINE); doc.line(M, H - 34, W - M, H - 34);
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(...MUTE);
+    texto(`Lucciano's - Relevamientos  |  ${r.code} ${nom(r.store_name)}  |  Generado el ${fecha(new Date().toISOString())}`, M, H - 20);
+    texto(`Página ${i} de ${n}`, W - M, H - 20, { align: 'right' });
+  }
+
+  doc.save(`Informe_${r.code}_${r.period}.pdf`);
+}
+
 /* ================================================================ vistas: cuenta */
 
 function vCuenta() {
@@ -1241,6 +1745,8 @@ function vCuenta() {
         <strong style="font-size:1.2rem">${esc(S.user.name)}</strong>
         <p class="sub">${esc(S.user.email)} · ${rol[S.user.role]}</p>
       </div>
+      ${S.user.role === 'admin' ? `
+      <a class="fila-menu" href="#/admin">${ICON.admin}<span><strong>Administración</strong><small>Usuarios, locales y checklist</small></span><span class="flecha">${ICON.derecha}</span></a>` : ''}
       <div class="bloque"><h2>Datos guardados en el celular</h2>
         <div class="card">
           <p class="sub" style="margin:0 0 12px">${S.cat ? `${S.cat.stores.length} locales y ${S.cat.items.length} ítems. Actualizado el ${fecha(S.cat.at)}.` : 'Todavía no se descargaron.'}</p>

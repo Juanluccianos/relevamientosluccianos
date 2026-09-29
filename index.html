@@ -151,7 +151,7 @@ h1, h2, h3 { font-family: var(--font-d); letter-spacing: -.01em; }
 .form { display: grid; gap: 15px; }
 .form label { display: grid; gap: 6px; font-weight: 600; font-size: 13px; color: var(--soft); }
 .form strong { font-family: var(--font-d); font-size: 16px; color: var(--ink); }
-input[type=text], input[type=email], input[type=password], input[type=search], input[type=month], input:not([type]), select, textarea {
+input[type=text], input[type=email], input[type=password], input[type=search], input[type=month], input[type=date], input:not([type]), select, textarea {
   width: 100%; min-height: 48px; padding: 11px 14px; border-radius: var(--r-s);
   border: 1.5px solid var(--line); background: var(--paper); color: var(--ink); transition: border-color .15s, background .15s;
 }
@@ -416,6 +416,71 @@ details.lista-plegable .fila:first-of-type { border-top: 1px solid var(--paper-2
 .cargando { display: grid; place-items: center; min-height: 50vh; }
 .cargando::before { content: ""; width: 34px; height: 34px; border-radius: 50%; border: 3px solid var(--paper-2); border-top-color: var(--ink); animation: gira .8s linear infinite; }
 @keyframes gira { to { transform: rotate(360deg); } }
+
+/* ============ v2.1: tareas, alertas, menú */
+.nav-badge { position: absolute; top: 6px; left: 50%; margin-left: 6px; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px; background: var(--critico); color: var(--white); font-size: 10.5px; font-weight: 800; font-style: normal; display: grid; place-items: center; box-shadow: 0 0 0 2px var(--white); }
+.hint-tarea { display: flex; align-items: center; gap: 6px; margin: 10px 0 0 !important; font-size: 12.5px !important; font-weight: 600 !important; color: var(--critico); }
+.hint-tarea svg { width: 15px; height: 15px; }
+
+.fila-menu { display: flex; align-items: center; gap: 14px; margin-top: 14px; padding: 15px 16px; background: var(--white); border: 1px solid var(--line); border-radius: var(--r); box-shadow: var(--shadow); text-decoration: none; }
+.fila-menu > svg { width: 22px; height: 22px; }
+.fila-menu > span:nth-child(2) { flex: 1; display: grid; }
+.fila-menu strong { font-family: var(--font-d); }
+.fila-menu small { color: var(--soft); font-size: 12.5px; }
+
+.t-estado { flex: none; width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center; background: var(--paper-2); color: var(--soft); }
+.t-estado svg { width: 17px; height: 17px; }
+.t-estado.vencida { background: #fbe6e4; color: var(--critico); }
+.t-estado.hoy { background: #fbf1df; color: var(--observado); }
+.t-estado.cerrada { background: #e7f5ec; color: var(--aprobado); }
+.t-venc.vencida { color: var(--critico); font-weight: 700; }
+.t-venc.hoy { color: var(--observado); font-weight: 700; }
+.fila.tarea .fila-txt strong { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; line-height: 1.3; }
+.estrella { color: var(--observado); display: grid; }
+.estrella svg { width: 17px; height: 17px; fill: currentColor; }
+
+.hero-chips { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 14px; }
+.chip-tarea { display: inline-flex; align-items: center; padding: 5px 12px; border-radius: 999px; font-size: 12.5px; font-weight: 700; background: rgba(255,255,255,.12); color: var(--white); }
+.chip-tarea.vencida { background: rgba(255,107,98,.18); color: var(--critico-cl); }
+.chip-tarea.hoy { background: rgba(241,185,90,.18); color: var(--observado-cl); }
+.chip-tarea.cerrada { background: rgba(82,208,140,.18); color: var(--aprobado-cl); }
+.chip-estrella { display: inline-flex; align-items: center; gap: 6px; padding: 5px 12px; border-radius: 999px; border: 1px solid rgba(255,255,255,.25); background: none; color: rgba(255,255,255,.8); font-size: 12.5px; font-weight: 600; cursor: pointer; }
+.chip-estrella svg { width: 14px; height: 14px; }
+.chip-estrella.on { border-color: var(--observado-cl); color: var(--observado-cl); }
+.chip-estrella.on svg { fill: currentColor; }
+
+.kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+.kpi { display: grid; gap: 2px; align-content: start; padding: 14px; background: var(--white); border: 1px solid var(--line); border-radius: 14px; box-shadow: var(--shadow); text-decoration: none; }
+.kpi b { font-family: var(--font-d); font-size: 28px; font-weight: 800; line-height: 1; font-variant-numeric: tabular-nums; }
+.kpi span { font-size: 12.5px; color: var(--soft); line-height: 1.3; }
+.kpi.mal b { color: var(--critico); }
+a.kpi:hover { border-color: var(--ink); }
+@media (max-width: 560px) { .kpis { grid-template-columns: 1fr 1fr; } }
+
+details.alerta { margin-bottom: 10px; }
+details.alerta summary { gap: 14px; justify-content: flex-start; }
+details.alerta summary::after { margin-left: auto; }
+.alerta-n { flex: none; min-width: 38px; height: 38px; padding: 0 8px; border-radius: 11px; display: grid; place-items: center; background: var(--ink); color: var(--white); font-family: var(--font-d); font-size: 16px; font-weight: 800; font-variant-numeric: tabular-nums; }
+.alerta-n.cero { background: var(--paper-2); color: var(--mute); }
+.alerta-txt { display: grid; gap: 1px; min-width: 0; }
+.alerta-txt strong { font-size: 14.5px; }
+.alerta-txt small { font-family: var(--font-b); font-weight: 400; font-size: 12.5px; color: var(--soft); }
+details.alerta.vacia summary { cursor: default; }
+details.alerta.vacia summary::after { display: none; }
+
+.sel-filtros { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; margin-top: 10px; }
+.sel-filtros select { min-height: 42px; font-size: 14px; }
+.sel-acciones { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 12px 0 6px; }
+.sel-acciones .sub { margin-left: auto; font-weight: 600; color: var(--ink); }
+.sel-lista { max-height: 380px; overflow-y: auto; border: 1px solid var(--paper-2); border-radius: 12px; }
+.sel-fila { display: flex; align-items: center; gap: 12px; padding: 10px 14px; border-top: 1px solid var(--paper-2); cursor: pointer; }
+.sel-fila:first-child { border-top: 0; }
+.sel-fila input { width: 20px; height: 20px; flex: none; accent-color: var(--ink); }
+.sel-fila:hover { background: #fafafa; }
+
+.form label input, .form label textarea, .form label select { font-weight: 400; color: var(--ink); }
+.form .foto-btn { display: inline-flex; grid-template-columns: none; gap: 6px; color: var(--ink); font-size: 13.5px; }
+.form .check { color: var(--ink); }
 
 @media (prefers-reduced-motion: reduce) { *, *::before { transition: none !important; animation: none !important; } }
 </style>
