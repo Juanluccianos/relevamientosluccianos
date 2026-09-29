@@ -4,7 +4,7 @@
 
 // ↓↓↓ CAMBIAR por la URL de tu Worker (sin barra final)
 const API = 'https://relevamientos-api.lucciano-viaticos.workers.dev';
-const VERSION = '2.1.0';
+const VERSION = '2.2.0';
 const PLAZO_DIAS = 7;          // mismo plazo que el Worker para corregir un incumplimiento
 const PLAZO_DIAS_CRITICO = 2;
 const DISTANCIA_MAX = 300; // metros: más lejos que esto, se marca como "cargado fuera del local"
@@ -92,21 +92,43 @@ function errorForm(msg) {
 
 const fmtDist = m => m >= 1000 ? `${(m / 1000).toLocaleString('es-AR', { maximumFractionDigits: 1 })} km` : `${Math.round(m)} m`;
 
-// Mismo cálculo que el Worker: pesos que cumplen / pesos evaluados, tope 100, crítico fallado tope 79
-function calcularPuntaje(resp, items) {
-  let tot = 0, ok = 0, crit = false;
+// Mismo cálculo que el Worker (y que Linkup): puntos por capítulo, ponderados por el peso de cada capítulo.
+// Cumple = todos los puntos, Parcial = la mitad, N/A no cuenta. Tope 100; crítico fallado, tope 79.
+const VALOR_PUNTOS = { ok: 1, partial: 0.5, fail: 0 };
+function puntosCapitulo(resp, items) {
+  let ok = 0, tot = 0;
   for (const it of items) {
-    const r = resp[it.id];
-    if (!r || !r.valor || r.valor === 'na') continue;
+    const v = resp[it.id]?.valor;
+    if (!v || v === 'na') continue;
     tot += it.weight;
-    if (r.valor === 'ok') ok += it.weight;
-    else if (it.critical) crit = true;
+    ok += it.weight * VALOR_PUNTOS[v];
   }
-  if (!tot) return null;
-  let s = Math.min(100, Math.round(ok / tot * 10000) / 100);
+  return { ok, tot };
+}
+function calcularPuntaje(resp, items) {
+  const pesos = new Map((S.cat?.chapters || []).map(c => [c.id, c.weight ?? 1]));
+  const porCap = new Map();
+  let crit = false;
+  for (const it of items) {
+    if (!porCap.has(it.chapter_id)) porCap.set(it.chapter_id, []);
+    porCap.get(it.chapter_id).push(it);
+    if (resp[it.id]?.valor === 'fail' && it.critical) crit = true;
+  }
+  let sw = 0, sum = 0;
+  for (const [cap, its] of porCap) {
+    const { ok, tot } = puntosCapitulo(resp, its);
+    if (!tot) continue;
+    const w = pesos.get(cap) ?? 1;
+    sw += w;
+    sum += w * ok / tot;
+  }
+  if (!sw) return null;
+  let s = Math.min(100, Math.round(sum / sw * 10000) / 100);
   if (crit) s = Math.min(s, 79);
   return s;
 }
+const fmtPeso = n => Number(n).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const fmtPts = n => Number(n).toLocaleString('es-AR', { maximumFractionDigits: 1 });
 
 const ICON = {
   inicio: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5 12 3l9 7.5V21h-6v-6H9v6H3z"/></svg>',
@@ -119,6 +141,7 @@ const ICON = {
   derecha: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>',
   check: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>',
   cruz: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6L6 18M6 6l12 12"/></svg>',
+  mitad: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="12" cy="12" r="8"/><path d="M12 4a8 8 0 0 1 0 16z" fill="currentColor" stroke="none"/></svg>',
   menos: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M5 12h14"/></svg>',
   sube: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg>',
   baja: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M19 12l-7 7-7-7"/></svg>',
@@ -299,7 +322,8 @@ async function sincronizar() {
         if (!r.subido) {
           const out = await post('/api/relevamientos', {
             id: r.id, store_id: r.store_id, periodo: r.periodo, respuestas: r.respuestas,
-            notas: r.notas, lat: r.lat, lng: r.lng, creado_cliente: r.creado
+            notas: r.notas, lat: r.lat, lng: r.lng, creado_cliente: r.creado,
+            firma_nombre: r.firma_nombre, firma_png: r.firma_png
           });
           r.subido = true;
           r.score = out.score;
@@ -565,7 +589,7 @@ async function vInicio() {
     locales = (await api(`/api/locales?periodo=${periodo}`)).locales;
   } catch {
     offline = true;
-    locales = (S.cat?.stores || []).filter(s => s.supervisor_id === S.user.id).map(s => ({ ...s, score: null }));
+    locales = (S.cat?.stores || []).filter(s => (s.supervisor_ids || [s.supervisor_id]).includes(S.user.id)).map(s => ({ ...s, score: null }));
   }
   const hechos = locales.filter(l => l.score != null).length;
   const pend = locales.filter(l => l.score == null);
@@ -698,8 +722,8 @@ async function vLocal(id) {
         <div class="card">
           ${d.capitulos.map(c => `
             <div class="cap-fila">
-              <span>${esc(c.nombre)}${c.fallas ? ` <small class="sub">(${c.fallas} ${c.fallas === 1 ? 'falla' : 'fallas'})</small>` : ''}</span>
-              <b class="txt-${c.escala}">${fmt(c.score)}</b>
+              <span>${esc(c.nombre)}<small class="sub">${c.posibles ? ` ${fmtPts(c.puntos)}/${fmtPts(c.posibles)} ptos` : ' No aplica'}</small></span>
+              <b class="txt-${c.escala}">${c.posibles ? fmt(c.score) : 'N/A'}</b>
               <div class="barra"><span class="${c.escala}" style="width:${c.score ?? 0}%"></span></div>
             </div>`).join('')}
         </div>
@@ -738,24 +762,33 @@ async function vRelevar(storeId) {
   }
   const items = S.cat.items;
   const caps = S.cat.chapters
-    .map(c => ({ ...c, items: items.filter(i => i.chapter_id === c.id) }))
+    .map(c => {
+      const its = items.filter(i => i.chapter_id === c.id);
+      const secciones = [];
+      for (const i of its) {
+        const nombre = i.section || c.name;
+        let sec = secciones.find(x => x.nombre === nombre);
+        if (!sec) secciones.push(sec = { nombre, items: [] });
+        sec.items.push(i);
+      }
+      return { ...c, items: its, secciones };
+    })
     .filter(c => c.items.length);
 
+  const OPCIONES = [['ok', 'Cumple'], ['partial', 'Parcial'], ['fail', 'No cumple'], ['na', 'N/A']];
   const itemHtml = i => {
     const r = b.resp[i.id] || {};
     return `
       <div class="item" data-item="${i.id}">
-        <p>${esc(i.text)}${i.critical ? '<span class="tag-crit">Crítico</span>' : ''}</p>
+        <p>${esc(i.text)}<span class="pts">${fmtPts(i.weight)} ${i.weight === 1 ? 'pto' : 'ptos'}</span>${i.critical ? '<span class="tag-crit">Crítico</span>' : ''}</p>
         <div class="opciones" role="group" aria-label="Respuesta">
-          <button type="button" data-v="ok" class="op ok ${r.valor === 'ok' ? 'sel' : ''}" aria-pressed="${r.valor === 'ok'}">${ICON.check}Cumple</button>
-          <button type="button" data-v="fail" class="op fail ${r.valor === 'fail' ? 'sel' : ''}" aria-pressed="${r.valor === 'fail'}">${ICON.cruz}No cumple</button>
-          <button type="button" data-v="na" class="op na ${r.valor === 'na' ? 'sel' : ''}" aria-pressed="${r.valor === 'na'}">N/A</button>
+          ${OPCIONES.map(([v, t]) => `<button type="button" data-v="${v}" class="op ${v} ${r.valor === v ? 'sel' : ''}" aria-pressed="${r.valor === v}">${t}</button>`).join('')}
         </div>
         <div class="item-extra">
           <input type="text" class="coment" placeholder="Comentario (opcional)" value="${esc(r.comentario || '')}">
           <label class="foto-btn">${ICON.camara}Foto<input type="file" accept="image/*" capture="environment" hidden></label>
         </div>
-        <p class="hint-tarea" ${r.valor === 'fail' ? '' : 'hidden'}>${ICON.reloj}Se va a crear una tarea para corregirlo en ${i.critical ? PLAZO_DIAS_CRITICO : PLAZO_DIAS} días</p>
+        <p class="hint-tarea" ${r.valor === 'fail' || r.valor === 'partial' ? '' : 'hidden'}>${ICON.reloj}Se va a crear una tarea para corregirlo en ${i.critical ? PLAZO_DIAS_CRITICO : PLAZO_DIAS} días</p>
         <div class="thumbs"></div>
       </div>`;
   };
@@ -775,11 +808,38 @@ async function vRelevar(storeId) {
     $('#live-prog').textContent = `${n} de ${items.length}`;
     $('#live-bar').style.width = `${Math.round(n / items.length * 100)}%`;
     for (const c of caps) {
-      const cs = calcularPuntaje(b.resp, c.items);
+      const { ok, tot } = puntosCapitulo(b.resp, c.items);
       const cn = c.items.filter(i => b.resp[i.id]?.valor).length;
+      const todoNA = cn === c.items.length && !tot;
       const el2 = $(`[data-capscore="${c.id}"]`);
-      if (el2) el2.textContent = cn ? `${fmt(cs)}` : `${cn}/${c.items.length}`;
+      if (el2) el2.textContent = todoNA ? 'No aplica' : cn ? `${fmtPts(ok)}/${fmtPts(tot)} ptos` : `0/${c.items.length}`;
+      const bn = $(`[data-na-cap="${c.id}"]`);
+      if (bn) bn.classList.toggle('on', todoNA);
+      for (const sec of c.secciones) {
+        const bs = $(`[data-na-sec="${c.id}|${CSS.escape(sec.nombre)}"]`);
+        if (bs) bs.classList.toggle('on', sec.items.every(i => b.resp[i.id]?.valor === 'na'));
+      }
     }
+  };
+
+  const marcar = (id, valor) => {
+    b.resp[id] = { ...(b.resp[id] || {}), valor };
+    const itemEl = $(`[data-item="${id}"]`);
+    if (!itemEl) return;
+    $$('.op', itemEl).forEach(x => {
+      const sel = x.dataset.v === valor;
+      x.classList.toggle('sel', sel);
+      x.setAttribute('aria-pressed', sel);
+    });
+    itemEl.classList.remove('falta');
+    $('.hint-tarea', itemEl).hidden = valor !== 'fail' && valor !== 'partial';
+  };
+  // "No aplica" para una sección o un capítulo entero; si ya estaba todo en N/A, lo desmarca
+  const alternarNA = its => {
+    const todo = its.every(i => b.resp[i.id]?.valor === 'na');
+    its.forEach(i => marcar(i.id, todo ? null : 'na'));
+    actualizarPuntaje();
+    guardarBorrador();
   };
 
   const dibujarThumbs = itemId => {
@@ -813,13 +873,30 @@ async function vRelevar(storeId) {
       </div>
       ${caps.map(c => `
         <section class="cap">
-          <h2>${esc(c.name)}<span data-capscore="${c.id}"></span></h2>
-          ${c.items.map(itemHtml).join('')}
+          <div class="cap-head">
+            <h2>${esc(c.name)}</h2>
+            <span class="cap-pts" data-capscore="${c.id}"></span>
+            <button type="button" class="na-btn" data-na-cap="${c.id}">No aplica</button>
+          </div>
+          ${c.secciones.map(sec => `
+            ${c.secciones.length > 1 || sec.nombre !== c.name ? `
+            <div class="sec-head"><h3>${esc(sec.nombre)}</h3>
+              ${c.secciones.length > 1 ? `<button type="button" class="na-btn chico" data-na-sec="${c.id}|${esc(sec.nombre)}">No aplica</button>` : ''}</div>` : ''}
+            ${sec.items.map(itemHtml).join('')}`).join('')}
         </section>`).join('')}
       <div class="pie-rel">
         <label class="form"><span style="font-weight:600">Observaciones generales</span>
           <textarea id="notas" placeholder="Algo que el local tenga que saber o corregir">${esc(b.notas)}</textarea>
         </label>
+        <div class="card form firma-card">
+          <strong>Conformidad del encargado</strong>
+          <label>Nombre de quien firma<input type="text" id="firma-nombre" value="${esc(b.firma_nombre || '')}" placeholder="Nombre y apellido" autocomplete="off"></label>
+          <div class="firma-wrap">
+            <canvas id="firma" aria-label="Espacio para firmar con el dedo"></canvas>
+            <span class="firma-guia">Firmá acá con el dedo</span>
+          </div>
+          <button type="button" class="btn chico fantasma" id="firma-borrar">Borrar firma</button>
+        </div>
         <button class="btn primario ancho" id="guardar">Guardar relevamiento</button>
         <button class="btn ancho fantasma" id="descartar">Descartar este relevamiento</button>
       </div>`,
@@ -830,21 +907,60 @@ async function vRelevar(storeId) {
       actualizarPuntaje();
 
       vista.addEventListener('click', e => {
+        const nc = e.target.closest('[data-na-cap]');
+        if (nc) return alternarNA(caps.find(c => c.id === Number(nc.dataset.naCap)).items);
+        const ns = e.target.closest('[data-na-sec]');
+        if (ns) {
+          const [cid, ...rest] = ns.dataset.naSec.split('|');
+          const cap = caps.find(c => c.id === Number(cid));
+          return alternarNA(cap.secciones.find(x => x.nombre === rest.join('|')).items);
+        }
         const op = e.target.closest('.op');
         if (!op) return;
-        const itemEl = op.closest('.item');
-        const id = Number(itemEl.dataset.item);
-        b.resp[id] = { ...(b.resp[id] || {}), valor: op.dataset.v };
-        $$('.op', itemEl).forEach(x => {
-          const sel = x === op;
-          x.classList.toggle('sel', sel);
-          x.setAttribute('aria-pressed', sel);
-        });
-        itemEl.classList.remove('falta');
-        $('.hint-tarea', itemEl).hidden = op.dataset.v !== 'fail';
+        marcar(Number(op.closest('.item').dataset.item), op.dataset.v);
         actualizarPuntaje();
         guardarBorrador();
       });
+
+      // Firma: se dibuja con el dedo o el mouse y se guarda como PNG en el borrador
+      const cv = $('#firma');
+      const ctx = cv.getContext('2d');
+      const ajustar = () => {
+        const r = cv.getBoundingClientRect(), k = window.devicePixelRatio || 1;
+        cv.width = Math.round(r.width * k); cv.height = Math.round(r.height * k);
+        ctx.setTransform(k, 0, 0, k, 0, 0);
+        ctx.lineWidth = 2.2; ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.strokeStyle = '#0a0a0a';
+        if (b.firma_png) {
+          const im = new Image();
+          im.onload = () => ctx.drawImage(im, 0, 0, r.width, r.height);
+          im.src = b.firma_png;
+        }
+        $('.firma-guia').hidden = !!b.firma_png;
+      };
+      ajustar();
+      let dibujando = false, ult = null;
+      const pto = ev => { const r = cv.getBoundingClientRect(); return [ev.clientX - r.left, ev.clientY - r.top]; };
+      cv.addEventListener('pointerdown', ev => { dibujando = true; ult = pto(ev); cv.setPointerCapture(ev.pointerId); $('.firma-guia').hidden = true; ev.preventDefault(); });
+      cv.addEventListener('pointermove', ev => {
+        if (!dibujando) return;
+        const p = pto(ev);
+        ctx.beginPath(); ctx.moveTo(...ult); ctx.lineTo(...p); ctx.stroke();
+        ult = p;
+      });
+      const fin = () => {
+        if (!dibujando) return;
+        dibujando = false;
+        // se guarda chica para que no pese: 600 px de ancho alcanza para leerla en el PDF
+        const c2 = document.createElement('canvas'), r = cv.getBoundingClientRect();
+        c2.width = 600; c2.height = Math.round(600 * r.height / r.width);
+        c2.getContext('2d').drawImage(cv, 0, 0, c2.width, c2.height);
+        b.firma_png = c2.toDataURL('image/png');
+        guardarBorrador();
+      };
+      cv.addEventListener('pointerup', fin);
+      cv.addEventListener('pointercancel', fin);
+      $('#firma-borrar').onclick = () => { b.firma_png = null; ctx.clearRect(0, 0, cv.width, cv.height); $('.firma-guia').hidden = false; guardarBorrador(); };
+      $('#firma-nombre').oninput = e => { b.firma_nombre = e.target.value; guardarBorrador(); };
 
       vista.addEventListener('input', e => {
         if (e.target.classList.contains('coment')) {
@@ -912,6 +1028,8 @@ async function vRelevar(storeId) {
             .filter(([, r]) => r.valor)
             .map(([item_id, r]) => ({ item_id: Number(item_id), valor: r.valor, comentario: r.comentario || '' })),
           notas: b.notas,
+          firma_nombre: b.firma_nombre || '',
+          firma_png: b.firma_png || null,
           lat: b.lat,
           lng: b.lng,
           fotos: b.fotos.map(f => ({ ...f, subida: false })),
@@ -979,11 +1097,12 @@ async function vRelevamiento(id) {
   const d = await api(`/api/relevamientos/${id}`);
   const r = d.relevamiento;
   const fotosDe = itemId => d.fotos.filter(f => f.item_id === itemId);
-  const fallas = d.respuestas.filter(x => x.value === 'fail');
+  const fallas = d.respuestas.filter(x => x.value === 'fail' || x.value === 'partial');
   const respHtml = x => `
     <div class="resp">
-      <div class="resp-top"><span class="ico ${x.value}">${x.value === 'ok' ? ICON.check : x.value === 'fail' ? ICON.cruz : ICON.menos}</span>
-        <p>${esc(x.text)}${x.critical ? '<span class="tag-crit">Crítico</span>' : ''}</p></div>
+      <div class="resp-top"><span class="ico ${x.value}">${{ ok: ICON.check, fail: ICON.cruz, partial: ICON.mitad, na: ICON.menos }[x.value]}</span>
+        <p>${esc(x.text)}${x.value === 'partial' ? '<span class="tag-parcial">Parcial</span>' : ''}${x.critical ? '<span class="tag-crit">Crítico</span>' : ''}</p>
+        <span class="pts">${x.value === 'na' ? 'N/A' : `${fmtPts(x.weight * (VALOR_PUNTOS[x.value] ?? 0))}/${fmtPts(x.weight)}`}</span></div>
       ${x.comment ? `<p class="coment">${esc(x.comment)}</p>` : ''}
       ${fotosDe(x.item_id).length ? `<div class="thumbs">${fotosDe(x.item_id).map(f =>
         `<div class="thumb"><a href="${fotoUrl(f.drive_id)}" target="_blank" rel="noopener"><img loading="lazy" src="${fotoUrl(f.drive_id)}" alt="Foto"></a></div>`).join('')}</div>` : ''}
@@ -992,7 +1111,7 @@ async function vRelevamiento(id) {
   d.respuestas.forEach(x => (porCap[x.capitulo] ||= []).push(x));
 
   return {
-    titulo: mesLabel(r.period),
+    titulo: 'Relevamiento',
     atras: `#/local/${r.store_id}`,
     html: `
       <section class="hero">
@@ -1010,12 +1129,15 @@ async function vRelevamiento(id) {
       </section>
       <button class="btn primario ancho" id="pdf" style="margin-top:14px">${ICON.pdf}Descargar informe PDF</button>
       <div class="bloque"><h2>Por capítulo</h2><div class="card">
-        ${d.capitulos.map(c => `<div class="cap-fila"><span>${esc(c.nombre)}</span><b class="txt-${c.escala}">${fmt(c.score)}</b>
+        ${d.capitulos.map(c => `<div class="cap-fila"><span>${esc(c.nombre)}<small class="sub">${c.posibles ? ` ${fmtPts(c.puntos)}/${fmtPts(c.posibles)} ptos, pesa ${fmtPeso(c.peso)}%` : ' No aplica'}</small></span><b class="txt-${c.escala}">${c.posibles ? fmt(c.score) : 'N/A'}</b>
           <div class="barra"><span class="${c.escala}" style="width:${c.score ?? 0}%"></span></div></div>`).join('')}
       </div></div>
-      <div class="bloque"><h2>No cumple (${fallas.length})</h2>
+      <div class="bloque"><h2>Para corregir (${fallas.length})</h2>
         ${fallas.length ? `<div class="card">${fallas.map(respHtml).join('')}</div>` : '<div class="card sub">Sin incumplimientos.</div>'}
       </div>
+      ${r.sign_name || r.sign_png ? `<div class="bloque"><h2>Conformidad del encargado</h2><div class="card firma-ver">
+        ${r.sign_png ? `<img src="${r.sign_png}" alt="Firma de ${esc(r.sign_name || 'el encargado')}">` : ''}
+        <p>${esc(r.sign_name || 'Sin nombre')}</p></div></div>` : ''}
       ${d.tareas.length ? `<div class="bloque"><h2>Planes de acción (${d.tareas.length})</h2>
         <div class="lista">${d.tareas.map(t => filaTarea({ ...t, store_name: r.store_name, code: r.code }, true)).join('')}</div></div>` : ''}
       <div class="bloque"><h2>Relevamiento completo</h2>
@@ -1190,6 +1312,16 @@ async function vAdmin() {
         <p class="error" id="err" hidden></p>
         <button class="btn primario" type="submit">Crear usuario</button>
       </form>
+      <div class="card form" style="margin-top:14px">
+        <strong>Cargar varios usuarios de una vez</strong>
+        <p class="sub" style="margin:0">Una fila por usuario. El rol puede ser supervisor, jefe o admin. Los emails que ya existen se saltean.</p>
+        <pre class="plantilla">nombre;email;rol
+Marina Herber;marina@luccianos.com.ar;supervisor</pre>
+        <textarea id="csv-u" placeholder="Pegá acá las filas"></textarea>
+        <label>Clave inicial para todos (mínimo 8 caracteres)<input type="text" id="clave-u" autocomplete="off"></label>
+        <button class="btn primario" id="imp-u">Cargar usuarios</button>
+        <div class="resultado" id="res-u"></div>
+      </div>
       <div class="bloque"><h2>Usuarios (${usuarios.length})</h2>
         <div class="lista">${usuarios.map(u => `
           <div class="fila ${u.active ? '' : 'inactivo'}">
@@ -1199,6 +1331,13 @@ async function vAdmin() {
           </div>`).join('')}</div>
       </div>`;
     montar = () => {
+      $('#imp-u').onclick = async () => {
+        try {
+          const r = await post('/api/admin/usuarios/importar', { csv: $('#csv-u').value, clave: $('#clave-u').value });
+          $('#res-u').innerHTML = `<b>${r.creados} usuarios creados${r.ya_existian ? `, ${r.ya_existian} ya existían` : ''}.</b>${r.errores.length ? `<ul>${r.errores.map(x => `<li>${esc(x)}</li>`).join('')}</ul>` : ''}`;
+          if (!r.errores.length) setTimeout(render, 1500);
+        } catch (err) { $('#res-u').innerHTML = `<p class="error">${esc(err.message)}</p>`; }
+      };
       $('#f-user').onsubmit = async e => {
         e.preventDefault();
         const malo = validar(e.target);
@@ -1231,9 +1370,9 @@ async function vAdmin() {
     html = `
       <div class="card form">
         <strong>Importar o actualizar locales</strong>
-        <p class="sub" style="margin:0">Pegá desde Excel o escribí una fila por local. Si el código ya existe, se actualiza. La columna de supervisor va con el email de un usuario ya creado.</p>
-        <pre class="plantilla">codigo;nombre;region;tipo;pais;email_supervisor;lat;lng
-PMALE;Lucciano's Alem;Mar del Plata;Propio;Argentina;supervisor@luccianos.com.ar;-38,0105;-57,5364</pre>
+        <p class="sub" style="margin:0">Pegá desde Excel o escribí una fila por local. Si el código ya existe, se actualiza. Los supervisores van con el email de usuarios ya creados; si son varios, separalos con "/". El primero queda como responsable de las tareas.</p>
+        <pre class="plantilla">codigo;nombre;region;tipo;pais;emails_supervisores;lat;lng
+PMALE;Lucciano's Alem;Mar del Plata;Propio;Argentina;operaciones.mdq@luccianos.com.ar/gonzalo@luccianos.com.ar;-38,02761;-57,53576</pre>
         <textarea id="csv" placeholder="Pegá acá las filas"></textarea>
         <button class="btn primario" id="imp">Importar locales</button>
         <div class="resultado" id="res"></div>
@@ -1262,10 +1401,10 @@ PMALE;Lucciano's Alem;Mar del Plata;Propio;Argentina;supervisor@luccianos.com.ar
     html = `
       <div class="card form">
         <strong>Importar o actualizar el checklist</strong>
-        <p class="sub" style="margin:0">Una fila por ítem. El peso define cuánto vale el ítem dentro del puntaje (1 es lo normal). Si un ítem marcado como crítico no se cumple, el local no puede pasar de 79.</p>
-        <pre class="plantilla">capitulo;item;peso;critico
-Camara helados;Cortinas, techo y piso limpios y sin hielo;1;no
-Colaboradores;Uniforme completo;2;si</pre>
+        <p class="sub" style="margin:0">Una fila por ítem. Los puntos son lo que vale el ítem dentro de su capítulo; el peso del capítulo es cuánto pesa ese capítulo en el puntaje total (como en Linkup: 11 cada uno y 12 Actitudes). Si un ítem crítico no se cumple, el local no puede pasar de 79.</p>
+        <pre class="plantilla">capitulo;peso_capitulo;seccion;item;puntos;critico
+Cámara de helados;11;Control;Temperatura adecuada (-20 °C a -25 °C);5;no
+Colaboradores;11;Uniforme;Uniforme completo;5;no</pre>
         <textarea id="csv" placeholder="Pegá acá las filas"></textarea>
         <label class="check"><input type="checkbox" id="reemp"> Reemplazar el checklist entero (los ítems que no estén en la lista se desactivan; los relevamientos viejos no cambian)</label>
         <button class="btn primario" id="imp">Importar checklist</button>
@@ -1273,9 +1412,9 @@ Colaboradores;Uniforme completo;2;si</pre>
       </div>
       <div class="bloque"><h2>Checklist actual (${items.filter(i => i.active).length} ítems activos)</h2>
         ${Object.entries(porCap).map(([cap, xs]) => `
-          <details class="card" style="margin-bottom:10px"><summary>${esc(cap)} (${xs.filter(x => x.active).length})</summary>
-            ${xs.map(i => `<div class="resp ${i.active ? '' : 'inactivo'}"><div class="resp-top"><p>${esc(i.text)}${i.critical ? '<span class="tag-crit">Crítico</span>' : ''}</p>
-              <span class="sub num">Peso ${String(i.weight).replace('.', ',')}${i.active ? '' : ' · Inactivo'}</span></div></div>`).join('')}
+          <details class="card" style="margin-bottom:10px"><summary>${esc(cap)} (${xs.filter(x => x.active).length} ítems, peso ${fmtPts(xs[0].peso_capitulo)})</summary>
+            ${xs.map(i => `<div class="resp ${i.active ? '' : 'inactivo'}"><div class="resp-top"><p>${i.seccion ? `<small class="sub">${esc(i.seccion)}</small><br>` : ''}${esc(i.text)}${i.critical ? '<span class="tag-crit">Crítico</span>' : ''}</p>
+              <span class="sub num">${fmtPts(i.weight)} ptos${i.active ? '' : ' · Inactivo'}</span></div></div>`).join('')}
           </details>`).join('') || '<div class="card sub">Todavía no hay ítems cargados.</div>'}
       </div>`;
     montar = () => {
@@ -1482,14 +1621,14 @@ async function vTareaNueva() {
   if (!esJefe()) { location.hash = '#/tareas'; return null; }
   if (!S.cat) await cargarCatalogo();
   const locales = [...S.cat.stores].sort((a, b) => nom(a.name).localeCompare(nom(b.name), 'es'));
-  const sups = [...new Set(locales.map(l => l.supervisor_name).filter(Boolean))].sort();
+  const sups = [...new Set(locales.flatMap(l => (l.supervisores || []).map(x => x.name)))].sort();
   const tipos = [...new Set(locales.map(l => l.type).filter(Boolean))].sort();
   const paises = [...new Set(locales.map(l => l.country).filter(Boolean))].sort();
   const elegidos = new Set();
   const f = { q: '', sup: '', tipo: '', pais: '' };
   const visibles = () => locales.filter(l =>
     (!f.q || nom(l.name).toLowerCase().includes(f.q) || l.code.toLowerCase().includes(f.q)) &&
-    (!f.sup || l.supervisor_name === f.sup) && (!f.tipo || l.type === f.tipo) && (!f.pais || l.country === f.pais));
+    (!f.sup || (l.supervisores || []).some(x => x.name === f.sup)) && (!f.tipo || l.type === f.tipo) && (!f.pais || l.country === f.pais));
   const en7 = new Date(Date.now() - 3 * 3600e3 + 7 * 86400e3).toISOString().slice(0, 10);
 
   const dibujar = () => {
@@ -1598,7 +1737,8 @@ const txtPDF = t => String(t ?? '').replace(/[’´`]/g, "'").replace(/[“”]/
 async function informePDF(d) {
   const jsPDF = await cargarJsPDF();
   const r = d.relevamiento;
-  const fallas = d.respuestas.filter(x => x.value === 'fail');
+  const fallas = d.respuestas.filter(x => x.value === 'fail' || x.value === 'partial');
+  const parciales = d.respuestas.filter(x => x.value === 'partial').length;
   const cumple = d.respuestas.filter(x => x.value === 'ok').length;
   const na = d.respuestas.filter(x => x.value === 'na').length;
   const tareaDe = itemId => d.tareas.find(t => t.item_id === itemId);
@@ -1645,9 +1785,9 @@ async function informePDF(d) {
   doc.setTextColor(...col); doc.setFont('helvetica', 'bold'); doc.setFontSize(40);
   texto(fmt(r.score), M + 26, y + 54);
   doc.setFontSize(11); texto(ESCALAS[r.escala], M + 28, y + 74);
-  const stats = [[cumple, 'Cumplen'], [fallas.length, 'No cumplen'], [na, 'No aplican']];
+  const stats = [[cumple, 'Cumplen'], [parciales, 'Parciales'], [fallas.length - parciales, 'No cumplen'], [na, 'No aplican']];
   stats.forEach(([n, l], i) => {
-    const x = W - M - 20 - (2 - i) * 92;
+    const x = W - M - 20 - (3 - i) * 74;
     doc.setTextColor(...INK); doc.setFontSize(22); doc.setFont('helvetica', 'bold');
     texto(String(n), x, y + 50, { align: 'right' });
     doc.setTextColor(...SOFT); doc.setFontSize(9); doc.setFont('helvetica', 'normal');
@@ -1661,9 +1801,11 @@ async function informePDF(d) {
   d.capitulos.forEach(c => {
     salto(30);
     doc.setFont('helvetica', 'normal'); doc.setFontSize(10); doc.setTextColor(...INK);
-    texto(c.nombre + (c.fallas ? `  (${c.fallas} ${c.fallas === 1 ? 'falla' : 'fallas'})` : ''), M, y);
-    doc.setFont('helvetica', 'bold'); doc.setTextColor(...COL[c.escala]);
-    texto(fmt(c.score), W - M, y, { align: 'right' });
+    texto(c.nombre, M, y);
+    doc.setTextColor(...MUTE); doc.setFontSize(8.5);
+    texto(c.posibles ? `${fmtPts(c.puntos)}/${fmtPts(c.posibles)} ptos  |  pesa ${fmtPeso(c.peso)}%` : 'No aplica', W - M - 52, y, { align: 'right' });
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(10); doc.setTextColor(...COL[c.escala]);
+    texto(c.posibles ? fmt(c.score) : 'N/A', W - M, y, { align: 'right' });
     doc.setFillColor(...LINE); doc.roundedRect(M, y + 6, W - 2 * M, 5, 2.5, 2.5, 'F');
     if (c.score) { doc.setFillColor(...COL[c.escala]); doc.roundedRect(M, y + 6, (W - 2 * M) * c.score / 100, 5, 2.5, 2.5, 'F'); }
     y += 28;
@@ -1684,12 +1826,12 @@ async function informePDF(d) {
     const alto = 16 + ls.length * 13 + 14 + cm.length * 12 + (fs.length ? 118 : 0) + (t ? 16 : 0) + 10;
     salto(alto);
     const y0 = y;
-    doc.setFillColor(...COL.critico); doc.rect(M, y0, 3, alto - 10, 'F');
+    doc.setFillColor(...(x.value === 'partial' ? COL.observado : COL.critico)); doc.rect(M, y0, 3, alto - 10, 'F');
     y += 12;
     doc.setTextColor(...INK); doc.setFont('helvetica', 'bold'); doc.setFontSize(10.5);
     doc.text(ls, M + 14, y); y += ls.length * 13;
     doc.setFont('helvetica', 'normal'); doc.setFontSize(8.5); doc.setTextColor(...MUTE);
-    texto(x.capitulo + (x.critical ? '  |  ITEM CRITICO' : ''), M + 14, y); y += 14;
+    texto(`${x.capitulo}${x.seccion ? ' / ' + x.seccion : ''}  |  ${x.value === 'partial' ? `PARCIAL ${fmtPts(x.weight / 2)} de ${fmtPts(x.weight)} ptos` : `NO CUMPLE 0 de ${fmtPts(x.weight)} ptos`}${x.critical ? '  |  ITEM CRITICO' : ''}`, M + 14, y); y += 14;
     if (cm.length) { doc.setTextColor(...SOFT); doc.setFont('helvetica', 'italic'); doc.setFontSize(9.5); doc.text(cm, M + 14, y); y += cm.length * 12; }
     if (fs.length) {
       let x0 = M + 14;
@@ -1719,6 +1861,22 @@ async function informePDF(d) {
     doc.setFillColor(...PAPER); doc.roundedRect(M, y, W - 2 * M, ls.length * 13 + 20, 8, 8, 'F');
     doc.setFont('helvetica', 'normal'); doc.setFontSize(10); doc.setTextColor(...SOFT);
     doc.text(ls, M + 14, y + 17); y += ls.length * 13 + 30;
+  }
+
+  // ---- firma
+  if (r.sign_name || r.sign_png) {
+    salto(150);
+    y += 10;
+    doc.setTextColor(...INK); doc.setFont('helvetica', 'bold'); doc.setFontSize(13);
+    texto('Conformidad del encargado', M, y); y += 12;
+    if (r.sign_png) {
+      const im = await imgLocal(r.sign_png).catch(() => null);
+      if (im) { const w = 220, h = Math.min(90, w * im.height / im.width); doc.addImage(r.sign_png, 'PNG', M, y, w, h); y += h; }
+    }
+    doc.setDrawColor(...LINE); doc.line(M, y + 4, M + 240, y + 4);
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(10); doc.setTextColor(...SOFT);
+    texto(r.sign_name || '', M, y + 18);
+    y += 30;
   }
 
   // ---- pie de página
