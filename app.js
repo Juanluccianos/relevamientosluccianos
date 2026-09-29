@@ -4,7 +4,7 @@
 
 // ↓↓↓ CAMBIAR por la URL de tu Worker (sin barra final)
 const API = 'https://relevamientos-api.lucciano-viaticos.workers.dev';
-const VERSION = '2.2.0';
+const VERSION = '2.2.1';
 const PLAZO_DIAS = 7;          // mismo plazo que el Worker para corregir un incumplimiento
 const PLAZO_DIAS_CRITICO = 2;
 const DISTANCIA_MAX = 300; // metros: más lejos que esto, se marca como "cargado fuera del local"
@@ -1435,12 +1435,28 @@ Colaboradores;11;Uniforme;Uniforme completo;5;no</pre>
     titulo: 'Administración',
     atras: volver,
     html: `
+      <div class="card drive-card">
+        <div><strong>Fotos en Drive</strong><p class="sub" id="drive-estado" style="margin:2px 0 0">Probá que el Worker pueda guardar las fotos.</p></div>
+        <button class="btn chico" id="drive-probar">Probar conexión</button>
+      </div>
       <div class="tabs" role="tablist">
         ${[['usuarios', 'Usuarios'], ['locales', 'Locales'], ['checklist', 'Checklist']].map(([k, t]) =>
           `<button role="tab" data-tab="${k}" class="${tab === k ? 'activo' : ''}" aria-selected="${tab === k}">${t}</button>`).join('')}
       </div>
       ${html}`,
     montar(app) {
+      $('#drive-probar').onclick = async ev => {
+        const est = $('#drive-estado');
+        ev.currentTarget.disabled = true;
+        est.textContent = 'Probando…';
+        try {
+          const r = await api('/api/admin/drive');
+          est.innerHTML = `<span class="txt-aprobado"><b>Conectado</b></span> por ${esc(r.modo)}, carpeta "${esc(r.carpeta)}".`;
+        } catch (err) {
+          est.innerHTML = `<span class="txt-critico"><b>No conecta:</b></span> ${esc(err.message)}`;
+        }
+        ev.currentTarget.disabled = false;
+      };
       $$('[data-tab]', app).forEach(b => b.onclick = () => { S.adminTab = b.dataset.tab; render(); });
       montar();
     }

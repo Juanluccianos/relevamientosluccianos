@@ -1,6 +1,6 @@
 /* Relevamientos Lucciano's — service worker
    Subí el número de CACHE cada vez que cambies index.html o app.js */
-const CACHE = 'relevamientos-v5';
+const CACHE = 'relevamientos-v6';
 const SHELL = ['./', './index.html', './app.js', './manifest.json', './icon-192.png', './icon-512.png', './logo-negro.png', './logo-blanco.png'];
 
 self.addEventListener('install', e => {

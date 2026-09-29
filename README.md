@@ -28,15 +28,19 @@ Copiá el `database_id` que te devuelve y pegalo en `wrangler.toml`. Después cr
 npx wrangler d1 execute relevamientos --remote --file=schema.sql
 ```
 
-## 2. Carpeta de Drive para las fotos
+## 2. Fotos en Drive (con Apps Script, sin permisos de administrador)
 
-La app sube las fotos con una **cuenta de servicio de Google**. Si viáticos ya usa una, reusá el mismo JSON.
+1. En tu Drive creá la carpeta **Relevamientos - Fotos** y copiá su ID (lo que sigue a `/folders/` en la dirección).
+2. Entrá a **script.google.com** → **Nuevo proyecto**, llamalo "Relevamientos fotos" y pegá el contenido de `worker/fotos-apps-script.gs`.
+3. Completá `CARPETA_ID` y `CLAVE` (una clave larga inventada) y guardá.
+4. Elegí la función **autorizar** y tocá **Ejecutar**. Aceptá los permisos: si aparece "Google no verificó esta app", entrá a **Configuración avanzada** → **Ir a Relevamientos fotos**. Es tu propio script.
+5. **Implementar** → **Nueva implementación** → tipo **Aplicación web**. Ejecutar como: **Yo**. Quién tiene acceso: **Cualquier usuario**. Copiá la URL que termina en `/exec`.
+6. En el Worker agregá `APPS_SCRIPT_URL` (variable, la URL) y `APPS_SCRIPT_SECRET` (secret, la misma CLAVE del script).
+7. En la app: **Cuenta → Administración → Probar conexión**.
 
-1. En Drive, dentro de una **unidad compartida** (las cuentas de servicio no tienen espacio propio en "Mi unidad"), creá la carpeta `Relevamientos - Fotos`.
-2. Compartila con el email de la cuenta de servicio (termina en `iam.gserviceaccount.com`) con rol **Administrador de contenido**.
-3. Abrí la carpeta y copiá el ID de la URL: lo que sigue a `/folders/`. Pegalo en `DRIVE_FOLDER_ID` dentro de `wrangler.toml`.
+Las fotos se guardan en subcarpetas por mes, y las de tareas resueltas en la subcarpeta `tareas`.
 
-Si no tenés cuenta de servicio: Google Cloud Console → proyecto de la empresa → habilitar **Google Drive API** → Credenciales → Crear cuenta de servicio → Claves → Agregar clave JSON.
+Si más adelante el administrador de Google habilita claves de cuenta de servicio, el Worker también acepta `GOOGLE_SA_JSON` + `DRIVE_FOLDER_ID` (la carpeta tiene que estar en una unidad compartida).
 
 ## 3. Secretos del Worker
 
