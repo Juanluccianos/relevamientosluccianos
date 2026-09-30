@@ -4,7 +4,7 @@
 
 // ↓↓↓ CAMBIAR por la URL de tu Worker (sin barra final)
 const API = 'https://relevamientos-api.lucciano-viaticos.workers.dev';
-const VERSION = '2.2.1';
+const VERSION = '2.3.0';
 const PLAZO_DIAS = 7;          // mismo plazo que el Worker para corregir un incumplimiento
 const PLAZO_DIAS_CRITICO = 2;
 const DISTANCIA_MAX = 300; // metros: más lejos que esto, se marca como "cargado fuera del local"
@@ -155,6 +155,8 @@ const ICON = {
   pdf: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6M9 14h6M9 17h4"/></svg>',
   mas: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>',
   reloj: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>',
+  llave: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="15" r="4"/><path d="M10.8 12.2L20 3M16 7l3 3M14 9l2 2"/></svg>',
+  salir: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg>',
   camara: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h3l2-3h6l2 3h3v13H4z"/><circle cx="12" cy="13" r="4"/></svg>'
 };
 
@@ -1286,179 +1288,503 @@ async function vResumen() {
   };
 }
 
+/* ================================================================ hoja de edición */
+
+// Ventana para editar: en el celular sube desde abajo, en la compu aparece al centro.
+function abrirHoja({ titulo, html, montar, guardar, textoGuardar = 'Guardar', peligro = null }) {
+  cerrarHoja();
+  const fondo = document.createElement('div');
+  fondo.className = 'hoja-fondo';
+  fondo.innerHTML = `
+    <div class="hoja" role="dialog" aria-modal="true" aria-labelledby="hoja-titulo">
+      <div class="hoja-top"><h2 id="hoja-titulo">${esc(titulo)}</h2>
+        <button type="button" class="hoja-x" aria-label="Cerrar">${ICON.cruz}</button></div>
+      <div class="hoja-cuerpo form">${html}<p class="error" id="hoja-err" hidden></p></div>
+      ${guardar || peligro ? `<div class="hoja-pie">
+        ${peligro ? `<button type="button" class="btn fantasma peligro" id="hoja-peligro">${esc(peligro.texto)}</button>` : ''}
+        ${guardar ? `<button type="button" class="btn primario" id="hoja-ok">${esc(textoGuardar)}</button>` : ''}
+      </div>` : ''}
+    </div>`;
+  document.body.appendChild(fondo);
+  document.body.classList.add('con-hoja');
+  requestAnimationFrame(() => fondo.classList.add('ver'));
+  const hoja = $('.hoja', fondo);
+  const err = msg => { const e = $('#hoja-err', fondo); e.textContent = msg || ''; e.hidden = !msg; };
+  fondo.addEventListener('click', e => { if (e.target === fondo) cerrarHoja(); });
+  $('.hoja-x', fondo).onclick = cerrarHoja;
+  fondo.addEventListener('keydown', e => { if (e.key === 'Escape') cerrarHoja(); });
+  const correr = async (btn, fn) => {
+    btn.disabled = true;
+    err('');
+    try { if ((await fn(hoja, err)) !== false) cerrarHoja(); }
+    catch (x) { err(x.message); }
+    btn.disabled = false;
+  };
+  if (guardar) $('#hoja-ok', fondo).onclick = e => correr(e.currentTarget, guardar);
+  if (peligro) $('#hoja-peligro', fondo).onclick = e => {
+    if (peligro.confirmar && !confirm(peligro.confirmar)) return;
+    correr(e.currentTarget, peligro.accion);
+  };
+  montar?.(hoja, err);
+  setTimeout(() => $('input:not([type=hidden]):not([readonly]), textarea, select', hoja)?.focus(), 250);
+}
+function cerrarHoja() {
+  const f = $('.hoja-fondo');
+  if (!f) return;
+  f.classList.remove('ver');
+  document.body.classList.remove('con-hoja');
+  setTimeout(() => f.remove(), 200);
+}
+const valor = (hoja, sel) => ($(sel, hoja)?.value ?? '').trim();
+const iniciales = n => String(n || '?').split(/\s+/).filter(Boolean).slice(0, 2).map(x => x[0].toUpperCase()).join('');
+const ROL = { admin: 'Administrador', jefe: 'Jefe', supervisor: 'Supervisor' };
+
 /* ================================================================ vistas: admin */
 
 async function vAdmin() {
   if (S.user.role !== 'admin') { location.hash = '#/'; return null; }
-  const volver = '#/cuenta';
-  const tab = S.adminTab;
-  let html = '';
-  let montar = () => {};
-
-  if (tab === 'usuarios') {
-    const { usuarios } = await api('/api/admin/usuarios');
-    const rol = { admin: 'Administrador', jefe: 'Jefe', supervisor: 'Supervisor' };
-    html = `
-      <form id="f-user" class="card form" novalidate>
-        <strong>Nuevo usuario</strong>
-        <label>Nombre y apellido<input name="nombre" required></label>
-        <label>Email<input name="email" type="email" inputmode="email" required data-email></label>
-        <label>Rol<select name="rol">
-          <option value="supervisor">Supervisor: releva sus locales</option>
-          <option value="jefe">Jefe: ve todo y el resumen</option>
-          <option value="admin">Administrador: además configura la app</option>
-        </select></label>
-        <label>Clave inicial (mínimo 8 caracteres)<input name="clave" type="text" minlength="8" required></label>
-        <p class="error" id="err" hidden></p>
-        <button class="btn primario" type="submit">Crear usuario</button>
-      </form>
-      <div class="card form" style="margin-top:14px">
-        <strong>Cargar varios usuarios de una vez</strong>
-        <p class="sub" style="margin:0">Una fila por usuario. El rol puede ser supervisor, jefe o admin. Los emails que ya existen se saltean.</p>
-        <pre class="plantilla">nombre;email;rol
-Marina Herber;marina@luccianos.com.ar;supervisor</pre>
-        <textarea id="csv-u" placeholder="Pegá acá las filas"></textarea>
-        <label>Clave inicial para todos (mínimo 8 caracteres)<input type="text" id="clave-u" autocomplete="off"></label>
-        <button class="btn primario" id="imp-u">Cargar usuarios</button>
-        <div class="resultado" id="res-u"></div>
-      </div>
-      <div class="bloque"><h2>Usuarios (${usuarios.length})</h2>
-        <div class="lista">${usuarios.map(u => `
-          <div class="fila ${u.active ? '' : 'inactivo'}">
-            <span class="fila-txt"><strong>${esc(u.name)}</strong><small>${esc(u.email)} · ${rol[u.role]}${u.active ? '' : ' · Inactivo'}</small></span>
-            <button class="btn chico" data-clave="${u.id}">Clave</button>
-            ${u.id !== S.user.id ? `<button class="btn chico" data-activo="${u.id}" data-v="${u.active ? 0 : 1}">${u.active ? 'Desactivar' : 'Activar'}</button>` : ''}
-          </div>`).join('')}</div>
-      </div>`;
-    montar = () => {
-      $('#imp-u').onclick = async () => {
-        try {
-          const r = await post('/api/admin/usuarios/importar', { csv: $('#csv-u').value, clave: $('#clave-u').value });
-          $('#res-u').innerHTML = `<b>${r.creados} usuarios creados${r.ya_existian ? `, ${r.ya_existian} ya existían` : ''}.</b>${r.errores.length ? `<ul>${r.errores.map(x => `<li>${esc(x)}</li>`).join('')}</ul>` : ''}`;
-          if (!r.errores.length) setTimeout(render, 1500);
-        } catch (err) { $('#res-u').innerHTML = `<p class="error">${esc(err.message)}</p>`; }
-      };
-      $('#f-user').onsubmit = async e => {
-        e.preventDefault();
-        const malo = validar(e.target);
-        if (malo) return errorForm(malo);
-        const f = new FormData(e.target);
-        try {
-          await post('/api/admin/usuarios', Object.fromEntries(f));
-          toast('Usuario creado');
-          render();
-        } catch (err) {
-          $('#err').textContent = err.message;
-          $('#err').hidden = false;
-        }
-      };
-      $$('[data-clave]').forEach(b => b.onclick = async () => {
-        const c = prompt('Nueva clave para este usuario (mínimo 8 caracteres):');
-        if (!c) return;
-        try { await post(`/api/admin/usuarios/${b.dataset.clave}`, { clave: c }, 'PUT'); toast('Clave cambiada'); }
-        catch (err) { toast(err.message); }
-      });
-      $$('[data-activo]').forEach(b => b.onclick = async () => {
-        try { await post(`/api/admin/usuarios/${b.dataset.activo}`, { activo: b.dataset.v === '1' }, 'PUT'); render(); }
-        catch (err) { toast(err.message); }
-      });
-    };
-  }
-
-  if (tab === 'locales') {
-    await cargarCatalogo();
-    html = `
-      <div class="card form">
-        <strong>Importar o actualizar locales</strong>
-        <p class="sub" style="margin:0">Pegá desde Excel o escribí una fila por local. Si el código ya existe, se actualiza. Los supervisores van con el email de usuarios ya creados; si son varios, separalos con "/". El primero queda como responsable de las tareas.</p>
-        <pre class="plantilla">codigo;nombre;region;tipo;pais;emails_supervisores;lat;lng
-PMALE;Lucciano's Alem;Mar del Plata;Propio;Argentina;operaciones.mdq@luccianos.com.ar/gonzalo@luccianos.com.ar;-38,02761;-57,53576</pre>
-        <textarea id="csv" placeholder="Pegá acá las filas"></textarea>
-        <button class="btn primario" id="imp">Importar locales</button>
-        <div class="resultado" id="res"></div>
-      </div>
-      <div class="bloque"><h2>Locales cargados (${S.cat.stores.length})</h2>
-        <div class="lista">${S.cat.stores.map(s => `
-          <div class="fila"><span class="fila-txt"><strong>${esc(s.code)} ${esc(nom(s.name))}</strong>
-            <small>${esc(s.supervisor_name || 'Sin supervisor')}${s.lat == null ? ' · Sin coordenadas' : ''}</small></span></div>`).join('')}</div>
-      </div>`;
-    montar = () => {
-      $('#imp').onclick = async () => {
-        try {
-          const r = await post('/api/admin/locales/importar', { csv: $('#csv').value });
-          $('#res').innerHTML = `<b>${r.importados} locales importados.</b>${r.errores.length ? `<ul>${r.errores.map(x => `<li>${esc(x)}</li>`).join('')}</ul>` : ''}`;
-          await cargarCatalogo();
-          if (!r.errores.length) setTimeout(render, 1200);
-        } catch (err) { $('#res').innerHTML = `<p class="error">${esc(err.message)}</p>`; }
-      };
-    };
-  }
-
-  if (tab === 'checklist') {
-    const { items } = await api('/api/admin/checklist');
-    const porCap = {};
-    items.forEach(i => (porCap[i.capitulo] ||= []).push(i));
-    html = `
-      <div class="card form">
-        <strong>Importar o actualizar el checklist</strong>
-        <p class="sub" style="margin:0">Una fila por ítem. Los puntos son lo que vale el ítem dentro de su capítulo; el peso del capítulo es cuánto pesa ese capítulo en el puntaje total (como en Linkup: 11 cada uno y 12 Actitudes). Si un ítem crítico no se cumple, el local no puede pasar de 79.</p>
-        <pre class="plantilla">capitulo;peso_capitulo;seccion;item;puntos;critico
-Cámara de helados;11;Control;Temperatura adecuada (-20 °C a -25 °C);5;no
-Colaboradores;11;Uniforme;Uniforme completo;5;no</pre>
-        <textarea id="csv" placeholder="Pegá acá las filas"></textarea>
-        <label class="check"><input type="checkbox" id="reemp"> Reemplazar el checklist entero (los ítems que no estén en la lista se desactivan; los relevamientos viejos no cambian)</label>
-        <button class="btn primario" id="imp">Importar checklist</button>
-        <div class="resultado" id="res"></div>
-      </div>
-      <div class="bloque"><h2>Checklist actual (${items.filter(i => i.active).length} ítems activos)</h2>
-        ${Object.entries(porCap).map(([cap, xs]) => `
-          <details class="card" style="margin-bottom:10px"><summary>${esc(cap)} (${xs.filter(x => x.active).length} ítems, peso ${fmtPts(xs[0].peso_capitulo)})</summary>
-            ${xs.map(i => `<div class="resp ${i.active ? '' : 'inactivo'}"><div class="resp-top"><p>${i.seccion ? `<small class="sub">${esc(i.seccion)}</small><br>` : ''}${esc(i.text)}${i.critical ? '<span class="tag-crit">Crítico</span>' : ''}</p>
-              <span class="sub num">${fmtPts(i.weight)} ptos${i.active ? '' : ' · Inactivo'}</span></div></div>`).join('')}
-          </details>`).join('') || '<div class="card sub">Todavía no hay ítems cargados.</div>'}
-      </div>`;
-    montar = () => {
-      $('#imp').onclick = async () => {
-        const reemp = $('#reemp').checked;
-        if (reemp && !confirm('¿Reemplazar el checklist entero? Los ítems que no estén en la lista dejan de aparecer en los relevamientos nuevos.')) return;
-        try {
-          const r = await post('/api/admin/checklist/importar', { csv: $('#csv').value, reemplazar: reemp });
-          $('#res').innerHTML = `<b>${r.importados} ítems importados.</b>${r.errores.length ? `<ul>${r.errores.map(x => `<li>${esc(x)}</li>`).join('')}</ul>` : ''}`;
-          await cargarCatalogo();
-          if (!r.errores.length) setTimeout(render, 1200);
-        } catch (err) { $('#res').innerHTML = `<p class="error">${esc(err.message)}</p>`; }
-      };
-    };
-  }
+  const tab = S.adminTab || 'usuarios';
+  const vistas = { usuarios: adminUsuarios, locales: adminLocales, checklist: adminChecklist };
+  const v = await vistas[tab]();
 
   return {
     titulo: 'Administración',
-    atras: volver,
+    atras: '#/cuenta',
     html: `
-      <div class="card drive-card">
-        <div><strong>Fotos en Drive</strong><p class="sub" id="drive-estado" style="margin:2px 0 0">Probá que el Worker pueda guardar las fotos.</p></div>
-        <button class="btn chico" id="drive-probar">Probar conexión</button>
-      </div>
       <div class="tabs" role="tablist">
-        ${[['usuarios', 'Usuarios'], ['locales', 'Locales'], ['checklist', 'Checklist']].map(([k, t]) =>
-          `<button role="tab" data-tab="${k}" class="${tab === k ? 'activo' : ''}" aria-selected="${tab === k}">${t}</button>`).join('')}
+        ${[['usuarios', 'Usuarios', ICON.cuenta], ['locales', 'Locales', ICON.locales], ['checklist', 'Checklist', ICON.tareas]].map(([k, t, i]) =>
+          `<button role="tab" data-tab="${k}" class="${tab === k ? 'activo' : ''}" aria-selected="${tab === k}">${i}<span>${t}</span></button>`).join('')}
       </div>
-      ${html}`,
+      ${v.html}
+      <div class="drive-card">
+        <span class="drive-ico">${ICON.nube}</span>
+        <div><strong>Fotos en Drive</strong><p class="sub" id="drive-estado">Comprobá que las fotos se estén guardando.</p></div>
+        <button class="btn chico" id="drive-probar">Probar</button>
+      </div>`,
     montar(app) {
+      $$('[data-tab]', app).forEach(b => b.onclick = () => { S.adminTab = b.dataset.tab; render(); });
       $('#drive-probar').onclick = async ev => {
         const est = $('#drive-estado');
         ev.currentTarget.disabled = true;
         est.textContent = 'Probando…';
         try {
           const r = await api('/api/admin/drive');
-          est.innerHTML = `<span class="txt-aprobado"><b>Conectado</b></span> por ${esc(r.modo)}, carpeta "${esc(r.carpeta)}".`;
+          est.innerHTML = `<span class="txt-aprobado"><b>Conectado</b></span>, carpeta "${esc(r.carpeta)}"`;
         } catch (err) {
           est.innerHTML = `<span class="txt-critico"><b>No conecta:</b></span> ${esc(err.message)}`;
         }
         ev.currentTarget.disabled = false;
       };
-      $$('[data-tab]', app).forEach(b => b.onclick = () => { S.adminTab = b.dataset.tab; render(); });
-      montar();
+      v.montar(app);
+    }
+  };
+}
+
+function barraAdmin(placeholder, nuevo) {
+  return `
+    <div class="adm-barra">
+      <label class="buscar">${ICON.buscar}<input type="search" id="adm-q" placeholder="${placeholder}" autocomplete="off" aria-label="${placeholder}"></label>
+      <button class="btn primario" id="adm-nuevo">${ICON.mas}<span>${nuevo}</span></button>
+    </div>`;
+}
+const botonMasivo = texto => `<button class="adm-masivo" id="adm-masivo">${ICON.descarga}${texto}</button>`;
+function resultadoImport(r, extra = '') {
+  return `<div class="resultado ok-box"><b>${extra}</b>${r.errores?.length ? `<ul>${r.errores.map(x => `<li>${esc(x)}</li>`).join('')}</ul>` : ''}</div>`;
+}
+
+/* ---------- usuarios */
+
+async function adminUsuarios() {
+  const { usuarios } = await api('/api/admin/usuarios');
+  const f = { q: '', rol: '' };
+  const dibujar = () => {
+    const q = f.q.toLowerCase();
+    const l = usuarios.filter(u => (!q || u.name.toLowerCase().includes(q) || u.email.includes(q)) && (!f.rol || (f.rol === 'baja' ? !u.active : u.active && u.role === f.rol)));
+    $('#adm-lista').innerHTML = l.length ? l.map(u => `
+      <button class="adm-fila ${u.active ? '' : 'inactivo'}" data-id="${u.id}">
+        <span class="avatar r-${u.role}">${esc(iniciales(u.name))}</span>
+        <span class="fila-txt"><strong>${esc(u.name)}</strong><small>${esc(u.email)}</small></span>
+        <span class="rol-chip r-${u.role}">${u.active ? ROL[u.role] : 'De baja'}</span>
+        <span class="flecha">${ICON.derecha}</span>
+      </button>`).join('') : '<div class="vacio"><p>Ningún usuario coincide.</p></div>';
+  };
+  const cuenta = r => r === 'baja' ? usuarios.filter(u => !u.active).length : usuarios.filter(u => u.active && u.role === r).length;
+
+  const formUsuario = u => `
+    <label>Nombre y apellido<input id="u-nombre" value="${esc(u?.name || '')}" autocomplete="off"></label>
+    <label>Email${u ? `<input value="${esc(u.email)}" readonly class="solo-lectura">` : '<input id="u-email" type="email" inputmode="email" autocomplete="off">'}</label>
+    <div class="campo"><span class="campo-lbl">Rol</span>
+      <div class="segmento" id="u-rol">${['supervisor', 'jefe', 'admin'].map(r => `<button type="button" data-v="${r}" class="${(u?.role || 'supervisor') === r ? 'sel' : ''}">${ROL[r]}</button>`).join('')}</div>
+      <small class="ayuda" id="u-rol-ayuda"></small></div>
+    <label>${u ? 'Nueva clave (dejala vacía para no cambiarla)' : 'Clave inicial (mínimo 8 caracteres)'}
+      <span class="clave-wrap"><input id="u-clave" type="password" autocomplete="new-password"><button type="button" class="ojo" aria-label="Mostrar clave">${OJO}</button></span></label>
+    ${u && u.id !== S.user.id ? `<label class="interruptor"><input type="checkbox" id="u-activo" ${u.active ? 'checked' : ''}><span></span>Puede entrar a la app</label>` : ''}`;
+  const AYUDA_ROL = { supervisor: 'Releva sus locales y resuelve sus tareas.', jefe: 'Ve todos los locales, el resumen y crea tareas.', admin: 'Además configura usuarios, locales y checklist.' };
+  const montarForm = hoja => {
+    const seg = $('#u-rol', hoja);
+    const ayuda = () => { $('#u-rol-ayuda', hoja).textContent = AYUDA_ROL[$('.sel', seg).dataset.v]; };
+    seg.onclick = e => { const b = e.target.closest('button'); if (!b) return; $$('button', seg).forEach(x => x.classList.toggle('sel', x === b)); ayuda(); };
+    ayuda();
+  };
+  const abrir = u => abrirHoja({
+    titulo: u ? 'Editar usuario' : 'Nuevo usuario',
+    html: formUsuario(u),
+    montar: montarForm,
+    textoGuardar: u ? 'Guardar cambios' : 'Crear usuario',
+    guardar: async hoja => {
+      const rol = $('#u-rol .sel', hoja).dataset.v, clave = valor(hoja, '#u-clave'), nombre = valor(hoja, '#u-nombre');
+      if (!nombre) throw new Error('Poné el nombre');
+      if (u) {
+        const datos = { nombre, rol };
+        if (clave) datos.clave = clave;
+        if ($('#u-activo', hoja)) datos.activo = $('#u-activo', hoja).checked;
+        await post(`/api/admin/usuarios/${u.id}`, datos, 'PUT');
+        toast('Usuario actualizado');
+      } else {
+        const email = valor(hoja, '#u-email');
+        if (!emailValido(email)) throw new Error('El email tiene que tener un @ y un dominio');
+        await post('/api/admin/usuarios', { nombre, email, rol, clave });
+        toast('Usuario creado');
+      }
+      render();
+    }
+  });
+
+  return {
+    html: `
+      ${barraAdmin('Buscar por nombre o email', 'Nuevo')}
+      <div class="chips" id="adm-chips">
+        <button class="chip activo" data-f="">Todos ${usuarios.filter(u => u.active).length}</button>
+        ${[['supervisor', 'Supervisores'], ['jefe', 'Jefes'], ['admin', 'Administradores'], ['baja', 'De baja']].map(([r, t]) => `<button class="chip" data-f="${r}">${t} ${cuenta(r)}</button>`).join('')}
+      </div>
+      <div class="adm-lista" id="adm-lista"></div>
+      ${botonMasivo('Cargar varios usuarios desde una planilla')}`,
+    montar() {
+      dibujar();
+      $('#adm-q').oninput = e => { f.q = e.target.value; dibujar(); };
+      $('#adm-chips').onclick = e => { const c = e.target.closest('.chip'); if (!c) return; f.rol = c.dataset.f; $$('#adm-chips .chip').forEach(x => x.classList.toggle('activo', x === c)); dibujar(); };
+      $('#adm-lista').onclick = e => { const b = e.target.closest('[data-id]'); if (b) abrir(usuarios.find(u => u.id === Number(b.dataset.id))); };
+      $('#adm-nuevo').onclick = () => abrir(null);
+      $('#adm-masivo').onclick = () => abrirHoja({
+        titulo: 'Cargar varios usuarios',
+        html: `<p class="sub" style="margin:0">Una fila por usuario: nombre, email y rol (supervisor, jefe o admin). Los emails que ya existen se saltean.</p>
+          <pre class="plantilla">nombre;email;rol
+Marina Herber;marina@luccianos.com.ar;supervisor</pre>
+          <textarea id="m-csv" placeholder="Pegá acá las filas desde Excel o el Bloc de notas"></textarea>
+          <label>Clave inicial para todos (mínimo 8 caracteres)<input id="m-clave" autocomplete="off"></label>
+          <div id="m-res"></div>`,
+        textoGuardar: 'Cargar usuarios',
+        guardar: async hoja => {
+          const r = await post('/api/admin/usuarios/importar', { csv: valor(hoja, '#m-csv'), clave: valor(hoja, '#m-clave') });
+          $('#m-res', hoja).innerHTML = resultadoImport(r, `${r.creados} creados${r.ya_existian ? `, ${r.ya_existian} ya existían` : ''}.`);
+          if (!r.errores.length) { toast(`${r.creados} usuarios creados`); render(); return true; }
+          return false;
+        }
+      });
+    }
+  };
+}
+
+/* ---------- locales */
+
+async function adminLocales() {
+  const [{ locales }, { usuarios }] = await Promise.all([api('/api/admin/locales'), api('/api/admin/usuarios')]);
+  const supervisores = usuarios.filter(u => u.active).sort((a, b) => a.name.localeCompare(b.name, 'es'));
+  const f = { q: '', filtro: '' };
+  const FILTROS = [
+    ['', 'Todos', l => l.active],
+    ['Propio', 'Propios', l => l.active && l.type === 'Propio'],
+    ['Franquicia', 'Franquicias', l => l.active && l.type === 'Franquicia'],
+    ['sinsup', 'Sin supervisor', l => l.active && !l.supervisores.length],
+    ['sincoord', 'Sin ubicación', l => l.active && l.lat == null],
+    ['baja', 'De baja', l => !l.active]
+  ];
+  const dibujar = () => {
+    const q = f.q.toLowerCase(), fn = FILTROS.find(x => x[0] === f.filtro)[2];
+    const l = locales.filter(x => fn(x) && (!q || x.name.toLowerCase().includes(q) || x.code.toLowerCase().includes(q) || (x.supervisor_name || '').toLowerCase().includes(q)));
+    $('#adm-lista').innerHTML = l.length ? l.map(x => `
+      <button class="adm-fila ${x.active ? '' : 'inactivo'}" data-id="${x.id}">
+        <span class="codigo-chip">${esc(x.code)}</span>
+        <span class="fila-txt"><strong>${esc(nom(x.name))}</strong>
+          <small>${x.supervisores.length ? esc(x.supervisor_name) : '<span class="txt-urgente">Sin supervisor</span>'}${x.country && x.country !== 'Argentina' ? ` · ${esc(x.country)}` : ''}</small></span>
+        ${x.lat == null ? `<span class="aviso-chip" title="Sin ubicación">${ICON.pin}</span>` : ''}
+        <span class="flecha">${ICON.derecha}</span>
+      </button>`).join('') : '<div class="vacio"><p>Ningún local coincide.</p></div>';
+  };
+  const paises = [...new Set(['Argentina', 'Uruguay', 'Chile', 'España', 'Estados Unidos', ...locales.map(l => l.country).filter(Boolean)])];
+
+  const abrir = l => abrirHoja({
+    titulo: l ? `${l.code} · ${nom(l.name)}` : 'Nuevo local',
+    html: `
+      <div class="dos-campos">
+        <label>Código<input id="l-codigo" value="${esc(l?.code || '')}" maxlength="20" autocomplete="off" style="text-transform:uppercase"></label>
+        <label>Región<input id="l-region" value="${esc(l?.region || '')}" placeholder="Opcional" autocomplete="off"></label>
+      </div>
+      <label>Nombre<input id="l-nombre" value="${esc(l?.name || "Lucciano's ")}" autocomplete="off"></label>
+      <div class="campo"><span class="campo-lbl">Tipo</span>
+        <div class="segmento" id="l-tipo">${['Propio', 'Franquicia', 'Otro'].map(t => `<button type="button" data-v="${t}" class="${(l?.type || 'Propio') === t || (t === 'Otro' && l?.type && !['Propio', 'Franquicia'].includes(l.type)) ? 'sel' : ''}">${t}</button>`).join('')}</div></div>
+      <label>País<input id="l-pais" list="l-paises" value="${esc(l?.country || 'Argentina')}" autocomplete="off"><datalist id="l-paises">${paises.map(p => `<option value="${esc(p)}">`).join('')}</datalist></label>
+      <div class="campo"><span class="campo-lbl">Supervisores <small class="sub">(el primero que marques es el responsable de las tareas)</small></span>
+        <label class="buscar chico">${ICON.buscar}<input type="search" id="l-sup-q" placeholder="Buscar persona" autocomplete="off"></label>
+        <div class="sel-lista chica" id="l-sups">${[...(l?.supervisor_ids || []).map(id => supervisores.find(u => u.id === id)).filter(Boolean), ...supervisores.filter(u => !l?.supervisor_ids.includes(u.id))].map(u => `
+          <label class="sel-fila" data-n="${esc(u.name.toLowerCase())}"><input type="checkbox" value="${u.id}" ${l?.supervisor_ids.includes(u.id) ? 'checked' : ''}>
+            <span class="fila-txt"><strong>${esc(u.name)}</strong><small>${ROL[u.role]}</small></span></label>`).join('')}</div></div>
+      <div class="campo"><span class="campo-lbl">Ubicación <small class="sub">(para saber si el relevamiento se hizo en el local)</small></span>
+        <div class="dos-campos">
+          <input id="l-lat" inputmode="decimal" placeholder="Latitud" value="${l?.lat ?? ''}" aria-label="Latitud">
+          <input id="l-lng" inputmode="decimal" placeholder="Longitud" value="${l?.lng ?? ''}" aria-label="Longitud">
+        </div>
+        <div class="ubic-acciones">
+          <button type="button" class="btn chico" id="l-aqui">${ICON.pin}Estoy en el local</button>
+          <a class="btn chico fantasma" id="l-mapa" target="_blank" rel="noopener">Ver en el mapa</a>
+        </div>
+        <small class="ayuda">Si no estás en el local: en Google Maps, clic derecho sobre el local y pegá acá el primer renglón.</small></div>
+      ${l ? `<label class="interruptor"><input type="checkbox" id="l-activo" ${l.active ? 'checked' : ''}><span></span>Local activo (si lo das de baja deja de aparecer para relevar)</label>` : ''}`,
+    montar(hoja) {
+      const seg = $('#l-tipo', hoja);
+      seg.onclick = e => { const b = e.target.closest('button'); if (b) $$('button', seg).forEach(x => x.classList.toggle('sel', x === b)); };
+      $('#l-sup-q', hoja).oninput = e => { const q = e.target.value.toLowerCase(); $$('#l-sups .sel-fila', hoja).forEach(r => { r.hidden = q && !r.dataset.n.includes(q); }); };
+      // el orden en que se tildan define quién es el responsable principal
+      const orden = [...(l?.supervisor_ids || [])];
+      $('#l-sups', hoja).onchange = e => { const id = Number(e.target.value); e.target.checked ? orden.push(id) : orden.splice(orden.indexOf(id), 1); };
+      hoja._orden = orden;
+      // pegar "-38.0105, -57.5364" en la latitud completa las dos
+      $('#l-lat', hoja).addEventListener('input', e => {
+        const m = e.target.value.match(/^\s*(-?\d+[.,]\d+)\s*[,; ]\s*(-?\d+[.,]\d+)\s*$/);
+        if (m) { e.target.value = m[1].replace(',', '.'); $('#l-lng', hoja).value = m[2].replace(',', '.'); }
+        mapa();
+      });
+      $('#l-lng', hoja).oninput = () => mapa();
+      const mapa = () => {
+        const la = valor(hoja, '#l-lat'), ln = valor(hoja, '#l-lng'), a = $('#l-mapa', hoja);
+        a.href = la && ln ? `https://www.google.com/maps?q=${encodeURIComponent(la + ',' + ln)}` : `https://www.google.com/maps/search/${encodeURIComponent(valor(hoja, '#l-nombre'))}`;
+      };
+      mapa();
+      $('#l-aqui', hoja).onclick = e => {
+        const btn = e.currentTarget;
+        if (!navigator.geolocation) return toast('Este dispositivo no da la ubicación');
+        btn.disabled = true;
+        navigator.geolocation.getCurrentPosition(p => {
+          $('#l-lat', hoja).value = p.coords.latitude.toFixed(5);
+          $('#l-lng', hoja).value = p.coords.longitude.toFixed(5);
+          mapa(); btn.disabled = false; toast('Ubicación cargada');
+        }, () => { btn.disabled = false; toast('No se pudo obtener la ubicación'); }, { enableHighAccuracy: true, timeout: 15000 });
+      };
+    },
+    textoGuardar: l ? 'Guardar cambios' : 'Crear local',
+    guardar: async hoja => {
+      const datos = {
+        codigo: valor(hoja, '#l-codigo'), nombre: valor(hoja, '#l-nombre'), region: valor(hoja, '#l-region'),
+        tipo: $('#l-tipo .sel', hoja).dataset.v, pais: valor(hoja, '#l-pais'),
+        lat: valor(hoja, '#l-lat'), lng: valor(hoja, '#l-lng'),
+        supervisores: hoja._orden, activo: $('#l-activo', hoja) ? $('#l-activo', hoja).checked : true
+      };
+      await post(l ? `/api/admin/locales/${l.id}` : '/api/admin/locales', datos, l ? 'PUT' : 'POST');
+      toast(l ? 'Local actualizado' : 'Local creado');
+      await cargarCatalogo().catch(() => {});
+      render();
+    }
+  });
+
+  return {
+    html: `
+      ${barraAdmin('Buscar por nombre, código o supervisor', 'Nuevo')}
+      <div class="chips" id="adm-chips">${FILTROS.map(([k, t, fn], i) => `<button class="chip ${i ? '' : 'activo'}" data-f="${k}">${t} ${locales.filter(fn).length}</button>`).join('')}</div>
+      <div class="adm-lista" id="adm-lista"></div>
+      ${botonMasivo('Cargar o actualizar locales desde una planilla')}`,
+    montar() {
+      dibujar();
+      $('#adm-q').oninput = e => { f.q = e.target.value; dibujar(); };
+      $('#adm-chips').onclick = e => { const c = e.target.closest('.chip'); if (!c) return; f.filtro = c.dataset.f; $$('#adm-chips .chip').forEach(x => x.classList.toggle('activo', x === c)); dibujar(); };
+      $('#adm-lista').onclick = e => { const b = e.target.closest('[data-id]'); if (b) abrir(locales.find(x => x.id === Number(b.dataset.id))); };
+      $('#adm-nuevo').onclick = () => abrir(null);
+      $('#adm-masivo').onclick = () => abrirHoja({
+        titulo: 'Cargar locales desde una planilla',
+        html: `<p class="sub" style="margin:0">Si el código ya existe, se actualiza. Los supervisores van con su email; si son varios, separalos con "/".</p>
+          <pre class="plantilla">codigo;nombre;region;tipo;pais;emails_supervisores;lat;lng
+PMALE;Lucciano's Alem;Mar del Plata;Propio;Argentina;operaciones.mdq@luccianos.com.ar;-38,02761;-57,53576</pre>
+          <textarea id="m-csv" placeholder="Pegá acá las filas"></textarea><div id="m-res"></div>`,
+        textoGuardar: 'Cargar locales',
+        guardar: async hoja => {
+          const r = await post('/api/admin/locales/importar', { csv: valor(hoja, '#m-csv') });
+          $('#m-res', hoja).innerHTML = resultadoImport(r, `${r.importados} locales cargados.`);
+          await cargarCatalogo().catch(() => {});
+          if (!r.errores.length) { toast(`${r.importados} locales cargados`); render(); return true; }
+          return false;
+        }
+      });
+    }
+  };
+}
+
+/* ---------- checklist */
+
+async function adminChecklist() {
+  const { items, capitulos } = await api('/api/admin/checklist');
+  const verBajas = !!S.verBajas;
+  const activos = items.filter(i => i.active);
+  const pesoTotal = capitulos.filter(c => activos.some(i => i.chapter_id === c.id)).reduce((a, c) => a + c.weight, 0) || 1;
+  const abiertos = S.capAbiertos ||= new Set();
+
+  const capHtml = (c, idx) => {
+    const its = items.filter(i => i.chapter_id === c.id && (verBajas || i.active));
+    const act = its.filter(i => i.active);
+    const pts = act.reduce((a, i) => a + i.weight, 0);
+    const secciones = [];
+    for (const i of its) {
+      const n = i.seccion || '';
+      let s = secciones.find(x => x.n === n);
+      if (!s) secciones.push(s = { n, its: [] });
+      s.its.push(i);
+    }
+    return `
+      <details class="ck-cap" data-cap="${c.id}" ${abiertos.has(c.id) ? 'open' : ''}>
+        <summary>
+          <span class="ck-num">${idx + 1}</span>
+          <span class="ck-cap-txt"><strong>${esc(c.name)}</strong>
+            <small>${act.length} ${act.length === 1 ? 'ítem' : 'ítems'} · ${fmtPts(pts)} ptos</small></span>
+          <span class="ck-peso" title="Peso en el puntaje total">${act.length ? fmtPeso(c.weight / pesoTotal * 100) + '%' : 'Sin ítems'}</span>
+        </summary>
+        <div class="ck-cap-acciones">
+          <button class="btn chico" data-edit-cap="${c.id}">Editar capítulo</button>
+          <button class="icono-btn" data-mover-cap="${c.id}" data-dir="arriba" aria-label="Subir capítulo" ${idx === 0 ? 'disabled' : ''}>${ICON.sube}</button>
+          <button class="icono-btn" data-mover-cap="${c.id}" data-dir="abajo" aria-label="Bajar capítulo" ${idx === capitulos.length - 1 ? 'disabled' : ''}>${ICON.baja}</button>
+        </div>
+        ${secciones.map(s => `
+          ${s.n ? `<div class="ck-sec">${esc(s.n)}</div>` : ''}
+          ${s.its.map(i => {
+            const vis = act.filter(x => (x.seccion || '') === s.n);
+            const pos = vis.indexOf(i);
+            return `
+            <div class="ck-item ${i.active ? '' : 'inactivo'}">
+              <button class="ck-item-txt" data-edit-item="${i.id}">
+                <span>${esc(i.text)}</span>
+                <span class="ck-tags"><span class="pts">${fmtPts(i.weight)} ${i.weight === 1 ? 'pto' : 'ptos'}</span>${i.critical ? '<span class="tag-crit">Crítico</span>' : ''}${i.active ? '' : '<span class="tag-baja">De baja</span>'}</span>
+              </button>
+              ${i.active ? `<span class="ck-mover">
+                <button class="icono-btn" data-mover-item="${i.id}" data-dir="arriba" aria-label="Subir" ${pos <= 0 ? 'disabled' : ''}>${ICON.sube}</button>
+                <button class="icono-btn" data-mover-item="${i.id}" data-dir="abajo" aria-label="Bajar" ${pos === vis.length - 1 ? 'disabled' : ''}>${ICON.baja}</button>
+              </span>` : ''}
+            </div>`;
+          }).join('')}`).join('')}
+        <button class="ck-agregar" data-nuevo-item="${c.id}">${ICON.mas}Agregar ítem a ${esc(c.name)}</button>
+      </details>`;
+  };
+
+  const abrirCap = c => abrirHoja({
+    titulo: c ? 'Editar capítulo' : 'Nuevo capítulo',
+    html: `
+      <label>Nombre<input id="c-nombre" value="${esc(c?.name || '')}" autocomplete="off"></label>
+      <label>Peso en el puntaje total<input id="c-peso" inputmode="decimal" value="${c ? fmtPts(c.weight) : '11'}"></label>
+      <small class="ayuda">Como en Linkup: cada capítulo pesa 11 y Actitudes 12. Lo que importa es la proporción entre capítulos: si uno pesa el doble que otro, cuenta el doble en el puntaje.</small>`,
+    textoGuardar: c ? 'Guardar cambios' : 'Crear capítulo',
+    guardar: async hoja => {
+      await post(c ? `/api/admin/capitulos/${c.id}` : '/api/admin/capitulos', { nombre: valor(hoja, '#c-nombre'), peso: valor(hoja, '#c-peso') }, c ? 'PUT' : 'POST');
+      toast(c ? 'Capítulo actualizado' : 'Capítulo creado');
+      await cargarCatalogo().catch(() => {});
+      render();
+    }
+  });
+
+  const abrirItem = (i, capId) => {
+    const cap = i ? i.chapter_id : capId;
+    const secs = [...new Set(items.filter(x => x.chapter_id === cap && x.seccion).map(x => x.seccion))];
+    abrirHoja({
+      titulo: i ? 'Editar ítem' : 'Nuevo ítem',
+      html: `
+        <label>Qué hay que controlar<textarea id="i-texto" rows="3" style="min-height:90px">${esc(i?.text || '')}</textarea></label>
+        <label>Capítulo<select id="i-cap">${capitulos.map(c => `<option value="${c.id}" ${c.id === cap ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select></label>
+        <label>Sección <small class="sub">(opcional, por ejemplo Exterior o Baños)</small><input id="i-sec" list="i-secs" value="${esc(i?.seccion || '')}" autocomplete="off">
+          <datalist id="i-secs">${secs.map(x => `<option value="${esc(x)}">`).join('')}</datalist></label>
+        <div class="campo"><span class="campo-lbl">Puntos</span>
+          <div class="stepper"><button type="button" data-d="-1" aria-label="Menos">${ICON.menos}</button><input id="i-pts" inputmode="decimal" value="${fmtPts(i?.weight ?? 3)}" aria-label="Puntos"><button type="button" data-d="1" aria-label="Más">${ICON.mas}</button></div>
+          <small class="ayuda">Parcial suma la mitad de estos puntos.</small></div>
+        <label class="interruptor"><input type="checkbox" id="i-crit" ${i?.critical ? 'checked' : ''}><span></span>Ítem crítico: si no se cumple, el local no puede pasar de 79</label>
+        ${i && !i.active ? '<p class="sub" style="margin:0">Este ítem está dado de baja. Al guardar se vuelve a activar.</p>' : ''}`,
+      montar(hoja) {
+        $('.stepper', hoja).onclick = e => {
+          const b = e.target.closest('button'); if (!b) return;
+          const inp = $('#i-pts', hoja), v = Number(String(inp.value).replace(',', '.')) || 0;
+          inp.value = fmtPts(Math.max(0.5, v + Number(b.dataset.d)));
+        };
+      },
+      textoGuardar: i ? 'Guardar cambios' : 'Agregar ítem',
+      guardar: async hoja => {
+        await post(i ? `/api/admin/items/${i.id}` : '/api/admin/items', {
+          texto: valor(hoja, '#i-texto'), capitulo: Number(valor(hoja, '#i-cap')), seccion: valor(hoja, '#i-sec'),
+          puntos: valor(hoja, '#i-pts'), critico: $('#i-crit', hoja).checked, activo: true
+        }, i ? 'PUT' : 'POST');
+        abiertos.add(Number(valor(hoja, '#i-cap')));
+        toast(i ? 'Ítem actualizado' : 'Ítem agregado');
+        await cargarCatalogo().catch(() => {});
+        render();
+      },
+      peligro: i && i.active ? {
+        texto: 'Dar de baja',
+        confirmar: 'El ítem deja de aparecer en los relevamientos nuevos. Los relevamientos anteriores no cambian. ¿Seguimos?',
+        accion: async () => {
+          await post(`/api/admin/items/${i.id}`, { texto: i.text, capitulo: i.chapter_id, seccion: i.seccion, puntos: i.weight, critico: !!i.critical, activo: false }, 'PUT');
+          toast('Ítem dado de baja');
+          await cargarCatalogo().catch(() => {});
+          render();
+        }
+      } : null
+    });
+  };
+
+  const totalPts = activos.reduce((a, i) => a + i.weight, 0);
+  const capsVisibles = capitulos.filter(c => verBajas || items.some(i => i.chapter_id === c.id && i.active) || !items.some(i => i.chapter_id === c.id));
+  return {
+    html: `
+      <div class="ck-resumen">
+        <div><b>${capsVisibles.filter(c => activos.some(i => i.chapter_id === c.id)).length}</b><span>capítulos</span></div>
+        <div><b>${activos.length}</b><span>ítems</span></div>
+        <div><b>${fmtPts(totalPts)}</b><span>puntos</span></div>
+      </div>
+      <div class="adm-barra">
+        <label class="interruptor chico"><input type="checkbox" id="ck-bajas" ${verBajas ? 'checked' : ''}><span></span>Mostrar dados de baja</label>
+        <button class="btn primario con-texto" id="ck-nuevo-cap">${ICON.mas}<span>Capítulo</span></button>
+      </div>
+      <div class="ck-lista">${capsVisibles.map(capHtml).join('') || '<div class="vacio"><p>Todavía no hay capítulos. Creá el primero o cargá el checklist desde una planilla.</p></div>'}</div>
+      ${botonMasivo('Cargar el checklist completo desde una planilla')}`,
+    montar(app) {
+      $('#ck-bajas').onchange = e => { S.verBajas = e.target.checked; render(); };
+      $('#ck-nuevo-cap').onclick = () => abrirCap(null);
+      $$('.ck-cap', app).forEach(d => d.addEventListener('toggle', () => { const id = Number(d.dataset.cap); d.open ? abiertos.add(id) : abiertos.delete(id); }));
+      $('.ck-lista', app).addEventListener('click', async e => {
+        const t = e.target.closest('[data-edit-cap],[data-mover-cap],[data-edit-item],[data-mover-item],[data-nuevo-item]');
+        if (!t) return;
+        e.preventDefault();
+        if (t.dataset.editCap) return abrirCap(capitulos.find(c => c.id === Number(t.dataset.editCap)));
+        if (t.dataset.editItem) return abrirItem(items.find(i => i.id === Number(t.dataset.editItem)));
+        if (t.dataset.nuevoItem) return abrirItem(null, Number(t.dataset.nuevoItem));
+        t.disabled = true;
+        try {
+          if (t.dataset.moverCap) await post(`/api/admin/capitulos/${t.dataset.moverCap}/mover`, { dir: t.dataset.dir });
+          if (t.dataset.moverItem) await post(`/api/admin/items/${t.dataset.moverItem}/mover`, { dir: t.dataset.dir });
+          await cargarCatalogo().catch(() => {});
+          render();
+        } catch (err) { toast(err.message); t.disabled = false; }
+      });
+      $('#adm-masivo').onclick = () => abrirHoja({
+        titulo: 'Cargar el checklist desde una planilla',
+        html: `<p class="sub" style="margin:0">Una fila por ítem. Los puntos son lo que vale el ítem; el peso del capítulo, cuánto pesa en el total.</p>
+          <pre class="plantilla">capitulo;peso_capitulo;seccion;item;puntos;critico
+Cámara de helados;11;Control;Temperatura adecuada (-20 °C a -25 °C);5;no</pre>
+          <textarea id="m-csv" placeholder="Pegá acá las filas"></textarea>
+          <label class="interruptor"><input type="checkbox" id="m-reemp"><span></span>Reemplazar el checklist entero (lo que no esté en la planilla se da de baja)</label>
+          <div id="m-res"></div>`,
+        textoGuardar: 'Cargar checklist',
+        guardar: async hoja => {
+          const reemp = $('#m-reemp', hoja).checked;
+          if (reemp && !confirm('¿Reemplazar el checklist entero? Los relevamientos anteriores no cambian.')) return false;
+          const r = await post('/api/admin/checklist/importar', { csv: valor(hoja, '#m-csv'), reemplazar: reemp });
+          $('#m-res', hoja).innerHTML = resultadoImport(r, `${r.importados} ítems cargados.`);
+          await cargarCatalogo().catch(() => {});
+          if (!r.errores.length) { toast(`${r.importados} ítems cargados`); render(); return true; }
+          return false;
+        }
+      });
     }
   };
 }
@@ -1911,53 +2237,56 @@ async function informePDF(d) {
 /* ================================================================ vistas: cuenta */
 
 function vCuenta() {
-  const rol = { admin: 'Administrador', jefe: 'Jefe', supervisor: 'Supervisor' };
+  const u = S.user;
   return {
     titulo: 'Cuenta',
     html: `
-      <div class="card">
-        <strong style="font-size:1.2rem">${esc(S.user.name)}</strong>
-        <p class="sub">${esc(S.user.email)} · ${rol[S.user.role]}</p>
+      <section class="perfil">
+        <span class="avatar grande r-${u.role}">${esc(iniciales(u.name))}</span>
+        <div><h2>${esc(u.name)}</h2><p>${esc(u.email)}</p><span class="rol-chip r-${u.role}">${ROL[u.role]}</span></div>
+      </section>
+
+      <div class="menu">
+        ${u.role === 'admin' ? `
+        <a class="menu-fila" href="#/admin">
+          <span class="menu-ico">${ICON.admin}</span>
+          <span class="fila-txt"><strong>Administración</strong><small>Usuarios, locales y checklist</small></span>
+          <span class="flecha">${ICON.derecha}</span></a>` : ''}
+        <button class="menu-fila" id="act">
+          <span class="menu-ico">${ICON.sync}</span>
+          <span class="fila-txt"><strong>Actualizar datos</strong><small>${S.cat ? `${S.cat.stores.length} locales y ${S.cat.items.length} ítems, al ${fecha(S.cat.at)}` : 'Todavía no se descargaron'}</small></span>
+        </button>
+        <button class="menu-fila" id="clave">
+          <span class="menu-ico">${ICON.llave}</span>
+          <span class="fila-txt"><strong>Cambiar clave</strong><small>Para entrar a la app</small></span>
+          <span class="flecha">${ICON.derecha}</span>
+        </button>
+        <button class="menu-fila salir" id="salir">
+          <span class="menu-ico">${ICON.salir}</span>
+          <span class="fila-txt"><strong>Cerrar sesión</strong></span>
+        </button>
       </div>
-      ${S.user.role === 'admin' ? `
-      <a class="fila-menu" href="#/admin">${ICON.admin}<span><strong>Administración</strong><small>Usuarios, locales y checklist</small></span><span class="flecha">${ICON.derecha}</span></a>` : ''}
-      <div class="bloque"><h2>Datos guardados en el celular</h2>
-        <div class="card">
-          <p class="sub" style="margin:0 0 12px">${S.cat ? `${S.cat.stores.length} locales y ${S.cat.items.length} ítems. Actualizado el ${fecha(S.cat.at)}.` : 'Todavía no se descargaron.'}</p>
-          <button class="btn ancho" id="act">Actualizar datos</button>
-        </div>
-      </div>
-      <div class="bloque"><h2>Cambiar clave</h2>
-        <form id="f-clave" class="card form" novalidate>
-          ${campoClave('Clave actual', 'actual', 'autocomplete="current-password" required')}
-          ${campoClave('Clave nueva (mínimo 8 caracteres)', 'nueva', 'autocomplete="new-password" minlength="8" required')}
-          <p class="error" id="err" hidden></p>
-          <button class="btn primario" type="submit">Cambiar clave</button>
-        </form>
-      </div>
-      <div class="bloque">
-        <button class="btn ancho" id="salir">Cerrar sesión</button>
-        <p class="sub" style="text-align:center;margin-top:16px">Versión ${VERSION}</p>
-      </div>`,
+      <p class="version">Relevamientos Lucciano's · versión ${VERSION}</p>`,
     montar() {
-      $('#act').onclick = async () => {
+      $('#act').onclick = async e => {
+        const b = e.currentTarget;
+        b.disabled = true;
         try { await cargarCatalogo(); toast('Datos actualizados'); render(); }
-        catch (e) { toast(e.message); }
+        catch (err) { toast(err.message); b.disabled = false; }
       };
-      $('#f-clave').onsubmit = async e => {
-        e.preventDefault();
-        const malo = validar(e.target);
-        if (malo) return errorForm(malo);
-        const f = new FormData(e.target);
-        try {
-          await post('/api/cambiar-clave', { actual: f.get('actual'), nueva: f.get('nueva') });
+      $('#clave').onclick = () => abrirHoja({
+        titulo: 'Cambiar clave',
+        html: `${campoClave('Clave actual', 'actual', 'autocomplete="current-password"')}
+               ${campoClave('Clave nueva (mínimo 8 caracteres)', 'nueva', 'autocomplete="new-password"')}`,
+        textoGuardar: 'Cambiar clave',
+        guardar: async hoja => {
+          const actual = $('[name=actual]', hoja).value, nueva = $('[name=nueva]', hoja).value;
+          if (!actual) throw new Error('Escribí tu clave actual');
+          if (nueva.length < 8) throw new Error('La clave nueva tiene que tener al menos 8 caracteres');
+          await post('/api/cambiar-clave', { actual, nueva });
           toast('Clave cambiada');
-          e.target.reset();
-        } catch (err) {
-          $('#err').textContent = err.message;
-          $('#err').hidden = false;
         }
-      };
+      });
       $('#salir').onclick = async () => {
         const n = (await idb.all('cola')).length;
         if (n && !confirm(`Tenés ${n} relevamiento(s) sin enviar. Si cerrás sesión no se van a poder enviar hasta que vuelvas a ingresar. ¿Salir igual?`)) return;
