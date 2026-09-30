@@ -4,7 +4,7 @@
 
 // ↓↓↓ CAMBIAR por la URL de tu Worker (sin barra final)
 const API = 'https://relevamientos-api.lucciano-viaticos.workers.dev';
-const VERSION = '2.3.0';
+const VERSION = '2.3.1';
 const PLAZO_DIAS = 7;          // mismo plazo que el Worker para corregir un incumplimiento
 const PLAZO_DIAS_CRITICO = 2;
 const DISTANCIA_MAX = 300; // metros: más lejos que esto, se marca como "cargado fuera del local"
@@ -1342,7 +1342,7 @@ const ROL = { admin: 'Administrador', jefe: 'Jefe', supervisor: 'Supervisor' };
 /* ================================================================ vistas: admin */
 
 async function vAdmin() {
-  if (S.user.role !== 'admin') { location.hash = '#/'; return null; }
+  if (!esJefe()) { location.hash = '#/'; return null; }
   const tab = S.adminTab || 'usuarios';
   const vistas = { usuarios: adminUsuarios, locales: adminLocales, checklist: adminChecklist };
   const v = await vistas[tab]();
@@ -1419,7 +1419,11 @@ async function adminUsuarios() {
     <label>${u ? 'Nueva clave (dejala vacía para no cambiarla)' : 'Clave inicial (mínimo 8 caracteres)'}
       <span class="clave-wrap"><input id="u-clave" type="password" autocomplete="new-password"><button type="button" class="ojo" aria-label="Mostrar clave">${OJO}</button></span></label>
     ${u && u.id !== S.user.id ? `<label class="interruptor"><input type="checkbox" id="u-activo" ${u.active ? 'checked' : ''}><span></span>Puede entrar a la app</label>` : ''}`;
-  const AYUDA_ROL = { supervisor: 'Releva sus locales y resuelve sus tareas.', jefe: 'Ve todos los locales, el resumen y crea tareas.', admin: 'Además configura usuarios, locales y checklist.' };
+  const AYUDA_ROL = {
+    supervisor: 'Releva sus locales y resuelve sus tareas.',
+    jefe: 'Ve todo, crea tareas y administra usuarios, locales y checklist.',
+    admin: 'Igual que jefe. Pensado para quien mantiene la app.'
+  };
   const montarForm = hoja => {
     const seg = $('#u-rol', hoja);
     const ayuda = () => { $('#u-rol-ayuda', hoja).textContent = AYUDA_ROL[$('.sel', seg).dataset.v]; };
@@ -2247,7 +2251,7 @@ function vCuenta() {
       </section>
 
       <div class="menu">
-        ${u.role === 'admin' ? `
+        ${esJefe() ? `
         <a class="menu-fila" href="#/admin">
           <span class="menu-ico">${ICON.admin}</span>
           <span class="fila-txt"><strong>Administración</strong><small>Usuarios, locales y checklist</small></span>
