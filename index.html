@@ -636,6 +636,11 @@ body.con-hoja { overflow: hidden; }
 .menu-fila.salir .menu-ico { background: #fbe6e4; }
 .version { text-align: center; color: var(--mute); font-size: 12px; margin-top: 18px; }
 
+.archivo { position: relative; display: block !important; }
+.archivo input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+.archivo span { display: flex !important; align-items: center; justify-content: center; gap: 8px; min-height: 56px; border: 1.5px dashed var(--mute); border-radius: 12px; font-weight: 600; color: var(--ink); background: var(--paper); }
+.archivo span svg { width: 18px; height: 18px; }
+
 @media (prefers-reduced-motion: reduce) { *, *::before { transition: none !important; animation: none !important; } }
 </style>
 </head>

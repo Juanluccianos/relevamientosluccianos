@@ -4,7 +4,7 @@
 
 // ↓↓↓ CAMBIAR por la URL de tu Worker (sin barra final)
 const API = 'https://relevamientos-api.lucciano-viaticos.workers.dev';
-const VERSION = '2.3.1';
+const VERSION = '2.4.0';
 const PLAZO_DIAS = 7;          // mismo plazo que el Worker para corregir un incumplimiento
 const PLAZO_DIAS_CRITICO = 2;
 const DISTANCIA_MAX = 300; // metros: más lejos que esto, se marca como "cargado fuera del local"
@@ -307,6 +307,8 @@ function blobA64(blob) {
   });
 }
 
+// Las fotos del historial de Linkup se ven desde su link original; las nuevas, a través del Worker
+const fotoSrc = f => f.url || fotoUrl(f.drive_id);
 const fotoUrl = driveId => `${API}/api/foto/${encodeURIComponent(driveId)}?t=${encodeURIComponent(S.token)}`;
 
 /* ================================================================ sincronización */
@@ -1104,10 +1106,10 @@ async function vRelevamiento(id) {
     <div class="resp">
       <div class="resp-top"><span class="ico ${x.value}">${{ ok: ICON.check, fail: ICON.cruz, partial: ICON.mitad, na: ICON.menos }[x.value]}</span>
         <p>${esc(x.text)}${x.value === 'partial' ? '<span class="tag-parcial">Parcial</span>' : ''}${x.critical ? '<span class="tag-crit">Crítico</span>' : ''}</p>
-        <span class="pts">${x.value === 'na' ? 'N/A' : `${fmtPts(x.weight * (VALOR_PUNTOS[x.value] ?? 0))}/${fmtPts(x.weight)}`}</span></div>
+        <span class="pts">${x.value === 'na' ? 'N/A' : `${fmtPts(x.earned ?? x.weight * (VALOR_PUNTOS[x.value] ?? 0))}/${fmtPts(x.weight)}`}</span></div>
       ${x.comment ? `<p class="coment">${esc(x.comment)}</p>` : ''}
       ${fotosDe(x.item_id).length ? `<div class="thumbs">${fotosDe(x.item_id).map(f =>
-        `<div class="thumb"><a href="${fotoUrl(f.drive_id)}" target="_blank" rel="noopener"><img loading="lazy" src="${fotoUrl(f.drive_id)}" alt="Foto"></a></div>`).join('')}</div>` : ''}
+        `<div class="thumb"><a href="${esc(fotoSrc(f))}" target="_blank" rel="noopener"><img loading="lazy" src="${esc(fotoSrc(f))}" alt="Foto"></a></div>`).join('')}</div>` : ''}
     </div>`;
   const porCap = {};
   d.respuestas.forEach(x => (porCap[x.capitulo] ||= []).push(x));
@@ -1357,6 +1359,11 @@ async function vAdmin() {
       </div>
       ${v.html}
       <div class="drive-card">
+        <span class="drive-ico">${ICON.resumen}</span>
+        <div><strong>Historial de Linkup</strong><p class="sub">Importá los relevamientos anteriores desde el archivo convertido.</p></div>
+        <button class="btn chico" id="hist-importar">Importar</button>
+      </div>
+      <div class="drive-card" style="margin-top:10px">
         <span class="drive-ico">${ICON.nube}</span>
         <div><strong>Fotos en Drive</strong><p class="sub" id="drive-estado">Comprobá que las fotos se estén guardando.</p></div>
         <button class="btn chico" id="drive-probar">Probar</button>
@@ -1375,9 +1382,64 @@ async function vAdmin() {
         }
         ev.currentTarget.disabled = false;
       };
+      $('#hist-importar').onclick = abrirImportarHistorial;
       v.montar(app);
     }
   };
+}
+
+function abrirImportarHistorial() {
+  let datos = null;
+  abrirHoja({
+    titulo: 'Importar historial de Linkup',
+    html: `
+      <p class="sub" style="margin:0">Elegí el archivo <b>historial_linkup_importar.json</b>. Los relevamientos entran con su fecha, supervisor, puntaje, observaciones, firma y fotos. Si se sube dos veces, no se duplica nada.</p>
+      <label class="archivo"><input type="file" id="h-arch" accept=".json,application/json"><span id="h-nombre">${ICON.descarga}Elegir archivo</span></label>
+      <div id="h-info"></div>
+      <div class="barra" id="h-barra" hidden><span style="width:0%"></span></div>
+      <p class="sub" id="h-prog" hidden></p>
+      <div id="h-res"></div>`,
+    montar(hoja) {
+      $('#h-arch', hoja).onchange = async e => {
+        const f = e.target.files[0];
+        if (!f) return;
+        $('#h-nombre', hoja).innerHTML = `${ICON.check}${esc(f.name)}`;
+        try {
+          const j = JSON.parse(await f.text());
+          if (j.formato !== 'relevamientos-historial-v1' || !Array.isArray(j.relevamientos)) throw new Error('Este archivo no es el historial convertido');
+          datos = j.relevamientos;
+          const fechas = datos.map(r => r.fecha).sort();
+          $('#h-info', hoja).innerHTML = `<div class="ok-box"><b>${datos.length} relevamientos</b> de ${new Set(datos.map(r => r.code)).size} locales, del ${fecha(fechas[0])} al ${fecha(fechas[fechas.length - 1])}.</div>`;
+        } catch (err) {
+          datos = null;
+          $('#h-info', hoja).innerHTML = `<p class="error">${esc(err.message)}</p>`;
+        }
+      };
+    },
+    textoGuardar: 'Importar',
+    guardar: async (hoja, err) => {
+      if (!datos) throw new Error('Elegí primero el archivo');
+      const barra = $('#h-barra', hoja), prog = $('#h-prog', hoja);
+      barra.hidden = prog.hidden = false;
+      const tot = { creados: 0, ya_existian: 0, usuarios_nuevos: 0, errores: [] };
+      const TANDA = 5;
+      for (let i = 0; i < datos.length; i += TANDA) {
+        let r;
+        for (let intento = 1; intento <= 3; intento++) {
+          try { r = await post('/api/admin/historial', { relevamientos: datos.slice(i, i + TANDA) }); break; }
+          catch (e) { if (intento === 3) { tot.errores.push(`Tanda desde el #${i + 1}: ${e.message}`); r = null; } else await new Promise(ok => setTimeout(ok, 1500)); }
+        }
+        if (r) { tot.creados += r.creados; tot.ya_existian += r.ya_existian; tot.usuarios_nuevos += r.usuarios_nuevos; tot.errores.push(...r.errores); }
+        const hechos = Math.min(i + TANDA, datos.length);
+        $('span', barra).style.width = `${hechos / datos.length * 100}%`;
+        prog.textContent = `${hechos} de ${datos.length}`;
+      }
+      $('#h-res', hoja).innerHTML = `<div class="ok-box"><b>${tot.creados} importados${tot.ya_existian ? `, ${tot.ya_existian} ya estaban` : ''}${tot.usuarios_nuevos ? `, ${tot.usuarios_nuevos} supervisores creados dados de baja` : ''}.</b>
+        ${tot.errores.length ? `<ul>${tot.errores.slice(0, 20).map(x => `<li>${esc(x)}</li>`).join('')}</ul>` : ''}</div>`;
+      toast(`Historial: ${tot.creados} relevamientos importados`);
+      return false;
+    }
+  });
 }
 
 function barraAdmin(placeholder, nuevo) {
@@ -2063,8 +2125,8 @@ function cargarJsPDF() {
 }
 
 // Baja la foto de Drive y la achica para que el PDF no pese de más
-async function fotoParaPDF(driveId) {
-  const r = await fetch(fotoUrl(driveId));
+async function fotoParaPDF(f) {
+  const r = await fetch(fotoSrc(f));
   if (!r.ok) throw new Error('foto');
   const img = await createImageBitmap(await r.blob());
   const max = 700, k = Math.min(1, max / Math.max(img.width, img.height));
@@ -2075,7 +2137,11 @@ async function fotoParaPDF(driveId) {
   return { data: c.toDataURL('image/jpeg', 0.7), w: c.width, h: c.height };
 }
 function imgLocal(src) {
-  return new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = src; });
+  return new Promise((res, rej) => {
+    const i = new Image();
+    if (/^https?:/.test(src) && !src.startsWith(location.origin)) i.crossOrigin = 'anonymous';
+    i.onload = () => res(i); i.onerror = rej; i.src = src;
+  });
 }
 // Helvetica del PDF no tiene algunos signos tipográficos: los paso a su versión simple
 const txtPDF = t => String(t ?? '').replace(/[’´`]/g, "'").replace(/[“”]/g, '"').replace(/[•·]/g, '-').replace(/[–—]/g, '-').replace(/…/g, '...');
@@ -2095,7 +2161,7 @@ async function informePDF(d) {
     if (!fallas.some(x => x.item_id === f.item_id)) continue;
     (fotos[f.item_id] ||= []);
     if (fotos[f.item_id].length >= 3) continue;
-    try { fotos[f.item_id].push(await fotoParaPDF(f.drive_id)); } catch { /* si una foto no baja, sigue sin ella */ }
+    try { fotos[f.item_id].push(await fotoParaPDF(f)); } catch { /* si una foto no baja (por ejemplo, un link de Linkup), sigue sin ella */ }
   }
 
   const doc = new jsPDF({ unit: 'pt', format: 'a4' });
@@ -2177,7 +2243,7 @@ async function informePDF(d) {
     doc.setTextColor(...INK); doc.setFont('helvetica', 'bold'); doc.setFontSize(10.5);
     doc.text(ls, M + 14, y); y += ls.length * 13;
     doc.setFont('helvetica', 'normal'); doc.setFontSize(8.5); doc.setTextColor(...MUTE);
-    texto(`${x.capitulo}${x.seccion ? ' / ' + x.seccion : ''}  |  ${x.value === 'partial' ? `PARCIAL ${fmtPts(x.weight / 2)} de ${fmtPts(x.weight)} ptos` : `NO CUMPLE 0 de ${fmtPts(x.weight)} ptos`}${x.critical ? '  |  ITEM CRITICO' : ''}`, M + 14, y); y += 14;
+    texto(`${x.capitulo}${x.seccion ? ' / ' + x.seccion : ''}  |  ${x.value === 'partial' ? `PARCIAL ${fmtPts(x.earned ?? x.weight / 2)} de ${fmtPts(x.weight)} ptos` : `NO CUMPLE 0 de ${fmtPts(x.weight)} ptos`}${x.critical ? '  |  ITEM CRITICO' : ''}`, M + 14, y); y += 14;
     if (cm.length) { doc.setTextColor(...SOFT); doc.setFont('helvetica', 'italic'); doc.setFontSize(9.5); doc.text(cm, M + 14, y); y += cm.length * 12; }
     if (fs.length) {
       let x0 = M + 14;
@@ -2217,7 +2283,10 @@ async function informePDF(d) {
     texto('Conformidad del encargado', M, y); y += 12;
     if (r.sign_png) {
       const im = await imgLocal(r.sign_png).catch(() => null);
-      if (im) { const w = 220, h = Math.min(90, w * im.height / im.width); doc.addImage(r.sign_png, 'PNG', M, y, w, h); y += h; }
+      if (im) {
+        const w = 220, h = Math.min(90, w * im.height / im.width);
+        try { doc.addImage(im, 'PNG', M, y, w, h); y += h; } catch { /* firma externa que no se puede incrustar */ }
+      }
     }
     doc.setDrawColor(...LINE); doc.line(M, y + 4, M + 240, y + 4);
     doc.setFont('helvetica', 'normal'); doc.setFontSize(10); doc.setTextColor(...SOFT);
