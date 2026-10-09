@@ -4,10 +4,12 @@
 
 // ↓↓↓ CAMBIAR por la URL de tu Worker (sin barra final)
 const API = 'https://relevamientos-api.lucciano-viaticos.workers.dev';
-const VERSION = '2.4.0';
+const VERSION = '2.5.0';
 const PLAZO_DIAS = 7;          // mismo plazo que el Worker para corregir un incumplimiento
 const PLAZO_DIAS_CRITICO = 2;
 const DISTANCIA_MAX = 300; // metros: más lejos que esto, se marca como "cargado fuera del local"
+const VIDEO_MAX_SEG = 20;  // duración máxima de cada video (con calidad baja pesa unos 2 MB)
+const FOTO_MAX_MIN = 15;   // una foto de un ítem con más minutos que esto se rechaza: tiene que ser de recién
 
 /* ================================================================ utilidades */
 
@@ -157,6 +159,10 @@ const ICON = {
   reloj: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>',
   llave: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="15" r="4"/><path d="M10.8 12.2L20 3M16 7l3 3M14 9l2 2"/></svg>',
   salir: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg>',
+  video: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="14" height="12" rx="2"/><path d="M16 10l6-3v10l-6-3z"/></svg>',
+  play: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>',
+  galeria: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>',
+  compartir: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="M8.6 13.5l6.8 4M15.4 6.5l-6.8 4"/></svg>',
   camara: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h3l2-3h6l2 3h3v13H4z"/><circle cx="12" cy="13" r="4"/></svg>'
 };
 
@@ -191,30 +197,78 @@ const S = {
 
 /* ================================================================ API */
 
+// Error de red (sin señal o señal tan mala que no contesta): la app pasa a modo sin conexión
+function errorRed(lento) {
+  const e = new Error(lento
+    ? 'La señal está muy floja y el servidor no contestó a tiempo.'
+    : 'No hay conexión con el servidor. Revisá tu internet.');
+  e.sinRed = true;
+  return e;
+}
+
+// Cada pedido tiene un tiempo límite: con datos móviles flojos el celular cree que tiene internet
+// y sin esto la pantalla se quedaba esperando para siempre.
 async function api(path, opts = {}) {
-  let res;
+  const { timeout = 15000, ...resto } = opts;
+  const ctrl = new AbortController();
+  const reloj = setTimeout(() => ctrl.abort(), timeout);
+  let res, data = null;
   try {
-    res = await fetch(API + path, {
-      ...opts,
-      headers: {
-        'Content-Type': 'application/json',
-        ...(S.token ? { Authorization: 'Bearer ' + S.token } : {}),
-        ...(opts.headers || {})
-      }
-    });
-  } catch {
-    throw new Error('No hay conexión con el servidor. Revisá tu internet.');
+    try {
+      res = await fetch(API + path, {
+        ...resto,
+        signal: ctrl.signal,
+        headers: {
+          'Content-Type': 'application/json',
+          ...(S.token ? { Authorization: 'Bearer ' + S.token } : {}),
+          ...(resto.headers || {})
+        }
+      });
+    } catch {
+      throw errorRed(ctrl.signal.aborted);
+    }
+    try { data = await res.json(); } catch { if (ctrl.signal.aborted) throw errorRed(true); }
+  } finally {
+    clearTimeout(reloj);
   }
-  let data = null;
-  try { data = await res.json(); } catch { /* sin cuerpo */ }
   if (res.status === 401 && S.token) {
     salir();
-    throw new Error(data?.error || 'Tu sesión venció. Volvé a ingresar.');
+    const e = new Error(data?.error || 'Tu sesión venció. Volvé a ingresar.');
+    e.status = 401;
+    throw e;
   }
-  if (!res.ok) throw new Error(data?.error || `El servidor respondió con error ${res.status}`);
+  if (!res.ok) {
+    const e = new Error(data?.error || `El servidor respondió con error ${res.status}`);
+    e.status = res.status;
+    throw e;
+  }
   return data;
 }
-const post = (path, data, method = 'POST') => api(path, { method, body: JSON.stringify(data) });
+const post = (path, data, method = 'POST', opts = {}) => api(path, { ...opts, method, body: JSON.stringify(data) });
+
+// Reintenta lo que falló por la señal o por un error pasajero del servidor; un error de datos no se reintenta
+const esPasajero = e => e.sinRed || !e.status || e.status >= 500 || e.status === 408 || e.status === 429;
+async function reintentar(fn, intentos = 3) {
+  for (let i = 1; ; i++) {
+    try { return await fn(); }
+    catch (e) {
+      if (i >= intentos || !esPasajero(e) || !navigator.onLine) throw e;
+      await new Promise(ok => setTimeout(ok, i * 2500));
+    }
+  }
+}
+
+// Última lista de locales con puntajes, para mostrarla sin señal
+function guardarLocales(periodo, locales) {
+  try { localStorage.setItem('rl_locales', JSON.stringify({ periodo, locales })); } catch { /* sin lugar */ }
+}
+function localesGuardados(periodo) {
+  try {
+    const g = JSON.parse(localStorage.getItem('rl_locales') || 'null');
+    if (g && g.periodo === periodo) return g.locales;
+  } catch { /* nada guardado */ }
+  return null;
+}
 
 async function cargarCatalogo() {
   const d = await api('/api/catalogo');
@@ -276,7 +330,7 @@ const idb = {
 
 /* ================================================================ fotos */
 
-async function comprimir(file) {
+async function comprimir(file, max = 1280, calidad = 0.72) {
   let img;
   try {
     img = await createImageBitmap(file, { imageOrientation: 'from-image' });
@@ -288,14 +342,13 @@ async function comprimir(file) {
       i.src = URL.createObjectURL(file);
     });
   }
-  const max = 1280;
   const w = img.width, h = img.height;
   const r = Math.min(1, max / Math.max(w, h));
   const c = document.createElement('canvas');
   c.width = Math.round(w * r);
   c.height = Math.round(h * r);
   c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
-  return new Promise(res => c.toBlob(res, 'image/jpeg', 0.72));
+  return new Promise(res => c.toBlob(res, 'image/jpeg', calidad));
 }
 
 function blobA64(blob) {
@@ -307,6 +360,107 @@ function blobA64(blob) {
   });
 }
 
+/* ---- video: se graba DENTRO de la app, así es en vivo (no de la galería), dura poco y pesa poco */
+async function grabarVideo() {
+  if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) {
+    throw new Error('Este celular no permite grabar video desde la app. Actualizá el navegador o usá fotos.');
+  }
+  const cam = { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 24, max: 30 } };
+  let stream;
+  try { stream = await navigator.mediaDevices.getUserMedia({ video: cam, audio: true }); }
+  catch {
+    try { stream = await navigator.mediaDevices.getUserMedia({ video: cam }); }
+    catch { throw new Error('No hay permiso para usar la cámara. Habilitalo en los ajustes del navegador.'); }
+  }
+  const tipo = ['video/mp4;codecs=avc1', 'video/mp4', 'video/webm;codecs=vp8,opus', 'video/webm'].find(t => MediaRecorder.isTypeSupported?.(t)) || '';
+
+  return new Promise(resolve => {
+    const fondo = document.createElement('div');
+    fondo.className = 'cam-fondo';
+    fondo.innerHTML = `
+      <video class="cam-vista" autoplay muted playsinline></video>
+      <div class="cam-top"><span class="cam-tiempo num" id="cam-t">0:00 / 0:${String(VIDEO_MAX_SEG).padStart(2, '0')}</span></div>
+      <div class="cam-pie">
+        <button type="button" class="btn fantasma cam-cancelar" id="cam-x">Cancelar</button>
+        <button type="button" class="cam-rec" id="cam-rec" aria-label="Grabar"><span></span></button>
+        <span class="cam-espacio"></span>
+      </div>`;
+    document.body.appendChild(fondo);
+    document.body.classList.add('con-hoja');
+    const vista = $('video', fondo);
+    vista.srcObject = stream;
+    let rec = null, partes = [], inicio = 0, reloj = null, cancelado = false;
+
+    const terminar = blob => {
+      clearInterval(reloj);
+      stream.getTracks().forEach(t => t.stop());
+      document.body.classList.remove('con-hoja');
+      fondo.remove();
+      resolve(blob);
+    };
+    $('#cam-x', fondo).onclick = () => {
+      cancelado = true;
+      if (rec && rec.state !== 'inactive') rec.stop(); else terminar(null);
+    };
+    $('#cam-rec', fondo).onclick = e => {
+      const btn = e.currentTarget;
+      if (rec) { if (rec.state === 'recording') rec.stop(); return; }
+      try {
+        rec = new MediaRecorder(stream, { ...(tipo ? { mimeType: tipo } : {}), videoBitsPerSecond: 800000, audioBitsPerSecond: 64000 });
+      } catch {
+        rec = new MediaRecorder(stream);
+      }
+      rec.ondataavailable = ev => { if (ev.data?.size) partes.push(ev.data); };
+      rec.onstop = () => {
+        const seg = Math.round((Date.now() - inicio) / 1000);
+        const blob = cancelado || !partes.length ? null : new Blob(partes, { type: (rec.mimeType || tipo || 'video/webm').split(';')[0] });
+        if (blob) blob.duracion = seg;
+        terminar(blob);
+      };
+      rec.start(1000);
+      inicio = Date.now();
+      btn.classList.add('grabando');
+      btn.setAttribute('aria-label', 'Terminar');
+      reloj = setInterval(() => {
+        const s = Math.floor((Date.now() - inicio) / 1000);
+        $('#cam-t', fondo).textContent = `0:${String(s).padStart(2, '0')} / 0:${String(VIDEO_MAX_SEG).padStart(2, '0')}`;
+        if (s >= VIDEO_MAX_SEG && rec.state === 'recording') rec.stop();
+      }, 250);
+    };
+  });
+}
+
+// Visor a pantalla completa para fotos y videos
+function verMedia(src, video) {
+  const fondo = document.createElement('div');
+  fondo.className = 'visor-fondo';
+  fondo.innerHTML = `${video ? `<video src="${src}" controls autoplay playsinline></video>` : `<img src="${src}" alt="Foto">`}
+    <button type="button" class="visor-x" aria-label="Cerrar">${ICON.cruz}</button>`;
+  const cerrar = () => { document.body.classList.remove('con-hoja'); fondo.remove(); };
+  fondo.onclick = e => { if (e.target === fondo || e.target.closest('.visor-x')) cerrar(); };
+  document.body.appendChild(fondo);
+  document.body.classList.add('con-hoja');
+}
+// Los videos guardados se bajan enteros antes de reproducirlos: el iPhone no reproduce bien un video servido de a partes
+async function verVideoRemoto(src, btn) {
+  btn?.classList.add('bajando');
+  try {
+    const r = await fetch(src);
+    if (!r.ok) throw new Error();
+    verMedia(URL.createObjectURL(await r.blob()), true);
+  } catch {
+    toast('No se pudo bajar el video. Revisá la conexión.');
+  }
+  btn?.classList.remove('bajando');
+}
+// Miniatura de una foto o video ya guardado en el servidor
+function miniRemota(f) {
+  const src = esc(fotoSrc(f));
+  return String(f.mime || '').startsWith('video/')
+    ? `<button type="button" class="thumb thumb-video" data-video-src="${src}" aria-label="Ver video">${ICON.play}<small>Video</small></button>`
+    : `<div class="thumb"><a href="${src}" target="_blank" rel="noopener"><img loading="lazy" src="${src}" alt="Foto"></a></div>`;
+}
+
 // Las fotos del historial de Linkup se ven desde su link original; las nuevas, a través del Worker
 const fotoSrc = f => f.url || fotoUrl(f.drive_id);
 const fotoUrl = driveId => `${API}/api/foto/${encodeURIComponent(driveId)}?t=${encodeURIComponent(S.token)}`;
@@ -315,47 +469,170 @@ const fotoUrl = driveId => `${API}/api/foto/${encodeURIComponent(driveId)}?t=${e
 
 const nombreLocal = id => nom(S.cat?.stores.find(s => s.id === id)?.name) || `Local ${id}`;
 
-async function sincronizar() {
-  if (S.syncing || !navigator.onLine || !S.token) return;
+const esVideo = f => String(f.blob?.type || f.mime || '').startsWith('video/');
+
+/* Envío de un relevamiento: primero las respuestas, después fotos y videos de a dos en paralelo,
+   cada uno con reintentos. Lo que ya subió queda marcado, así si se corta la señal sigue desde ahí. */
+async function subirRelevamiento(r, avisar) {
+  if (!r.subido) {
+    avisar({ etapa: 'respuestas', hechas: 0, total: r.fotos.length });
+    const out = await reintentar(() => post('/api/relevamientos', {
+      id: r.id, store_id: r.store_id, periodo: r.periodo, respuestas: r.respuestas,
+      notas: r.notas, lat: r.lat, lng: r.lng, creado_cliente: r.creado,
+      firma_nombre: r.firma_nombre, firma_png: r.firma_png
+    }, 'POST', { timeout: 30000 }));
+    r.subido = true;
+    r.score = out.score;
+    r.tareas = out.tareas || 0;
+    r.error = null;
+    await idb.put('cola', r);
+  }
+  const total = r.fotos.length;
+  let hechas = r.fotos.filter(f => f.subida).length;
+  avisar({ etapa: 'fotos', hechas, total });
+  const pendientes = r.fotos.filter(f => !f.subida);
+  let primerError = null;
+
+  const trabajador = async () => {
+    while (pendientes.length && !primerError?.sinRed) {
+      const f = pendientes.shift();
+      try {
+        await reintentar(async () => post(`/api/relevamientos/${r.id}/fotos`, {
+          pid: f.pid, item_id: f.item_id, tipo: f.tipo || null,
+          mime: f.blob.type || 'image/jpeg', data: await blobA64(f.blob)
+        }, 'POST', { timeout: esVideo(f) ? 180000 : 60000 }));
+        f.subida = true;
+      } catch (e) {
+        if (esPasajero(e)) { primerError ||= e; continue; }
+        // el servidor la rechazó por algo que no se arregla reintentando: se avisa y se sigue con el resto
+        f.subida = true;
+        f.fallida = e.message;
+      }
+      hechas++;
+      await idb.put('cola', r);
+      avisar({ etapa: 'fotos', hechas, total });
+    }
+  };
+  await Promise.all([trabajador(), trabajador()]);
+  if (primerError) throw primerError;
+}
+
+// Hay un solo envío a la vez: si se llama de nuevo mientras corre, se espera el mismo
+const oyentesEnvio = new Set();
+function avisarEnvio(p) {
+  S.envio = p;
+  oyentesEnvio.forEach(fn => { try { fn(p); } catch { /* pantalla cerrada */ } });
+}
+
+function sincronizar() {
+  if (S.syncPromise) return S.syncPromise;
+  if (!navigator.onLine || !S.token) return Promise.resolve();
   S.syncing = true;
   actualizarBadge();
-  try {
+  S.syncPromise = (async () => {
     const cola = await idb.all('cola');
+    // primero el que se está mostrando en pantalla
+    cola.sort((a, b) => (b.id === S.prioridad) - (a.id === S.prioridad));
     for (const r of cola) {
       try {
-        if (!r.subido) {
-          const out = await post('/api/relevamientos', {
-            id: r.id, store_id: r.store_id, periodo: r.periodo, respuestas: r.respuestas,
-            notas: r.notas, lat: r.lat, lng: r.lng, creado_cliente: r.creado,
-            firma_nombre: r.firma_nombre, firma_png: r.firma_png
-          });
-          r.subido = true;
-          r.score = out.score;
-          r.tareas = out.tareas || 0;
-          r.error = null;
-          await idb.put('cola', r);
-        }
-        for (const f of r.fotos) {
-          if (f.subida) continue;
-          await post(`/api/relevamientos/${r.id}/fotos`, {
-            pid: f.pid, item_id: f.item_id, mime: f.blob.type || 'image/jpeg', data: await blobA64(f.blob)
-          });
-          f.subida = true;
-          await idb.put('cola', r);
-        }
+        await subirRelevamiento(r, p => avisarEnvio({ ...p, id: r.id, store_id: r.store_id }));
         await idb.del('cola', r.id);
-        toast(`${nombreLocal(r.store_id)}: relevamiento enviado${r.tareas ? `, ${r.tareas} ${r.tareas === 1 ? 'tarea nueva' : 'tareas nuevas'}` : ''}`);
+        const fallidas = r.fotos.filter(f => f.fallida);
+        toast(fallidas.length
+          ? `${nombreLocal(r.store_id)}: enviado, pero ${fallidas.length} ${fallidas.length === 1 ? 'archivo no se pudo subir' : 'archivos no se pudieron subir'} (${fallidas[0].fallida})`
+          : `${nombreLocal(r.store_id)}: relevamiento enviado${r.tareas ? `, ${r.tareas} ${r.tareas === 1 ? 'tarea nueva' : 'tareas nuevas'}` : ''}`);
         S.cont = null;
+        S.enviados = { ...(S.enviados || {}), [r.id]: { score: r.score, tareas: r.tareas, fallidas: fallidas.length } };
       } catch (e) {
         r.error = e.message;
         await idb.put('cola', r);
+        if (e.sinRed || e.status === 401) break;   // sin señal no tiene sentido probar con los demás
       }
     }
-  } finally {
+  })().finally(() => {
     S.syncing = false;
+    S.syncPromise = null;
+    avisarEnvio(null);
     actualizarBadge();
     if (location.hash.startsWith('#/pendientes')) render();
+  });
+  return S.syncPromise;
+}
+
+/* Pantalla de envío: aparece al guardar y no se va hasta que termina.
+   Mantiene la pantalla prendida, porque si el celular se bloquea el envío se corta. */
+async function pantallaEnvio(reg) {
+  S.prioridad = reg.id;
+  const fondo = document.createElement('div');
+  fondo.className = 'envio-fondo';
+  fondo.innerHTML = `<div class="envio" role="dialog" aria-modal="true" aria-live="polite">
+    <div class="envio-ico"><span class="girando"></span></div>
+    <h2 id="env-tit">Enviando relevamiento</h2>
+    <p class="sub" id="env-sub">${esc(nombreLocal(reg.store_id))}. No cierres la app ni bloquees el celular.</p>
+    <div class="barra"><span id="env-barra" style="width:3%"></span></div>
+    <p class="envio-txt num" id="env-txt">Preparando…</p>
+    <div class="envio-btns" id="env-btns"></div>
+  </div>`;
+  document.body.appendChild(fondo);
+  document.body.classList.add('con-hoja');
+  requestAnimationFrame(() => fondo.classList.add('ver'));
+  const cerrar = destino => {
+    document.body.classList.remove('con-hoja');
+    fondo.remove();
+    oyentesEnvio.delete(oyente);
+    S.prioridad = null;
+    if (destino) location.hash = destino;
+  };
+  const oyente = p => {
+    if (!p || p.id !== reg.id) return;
+    const pct = p.etapa === 'respuestas' ? 6 : 10 + (p.total ? 90 * p.hechas / p.total : 90);
+    $('#env-barra', fondo).style.width = `${Math.round(pct)}%`;
+    $('#env-txt', fondo).textContent = p.etapa === 'respuestas'
+      ? 'Enviando las respuestas…'
+      : p.total ? `Subiendo fotos y videos: ${p.hechas} de ${p.total}` : 'Terminando…';
+  };
+  oyentesEnvio.add(oyente);
+
+  let lock = null;
+  try { lock = await navigator.wakeLock?.request('screen'); } catch { /* el celular no lo permite */ }
+
+  if (navigator.onLine) {
+    await sincronizar();
+    // si justo había otro envío en curso, el nuestro pudo quedar afuera: una vuelta más
+    if (await idb.get('cola', reg.id) && navigator.onLine) await sincronizar();
   }
+  try { await lock?.release(); } catch { /* ya liberado */ }
+
+  const quedo = await idb.get('cola', reg.id);
+  const ico = $('.envio-ico', fondo), btns = $('#env-btns', fondo);
+  if (!quedo) {
+    const info = S.enviados?.[reg.id] || {};
+    ico.innerHTML = anillo(info.score ?? reg.score, 'l');
+    $('#env-tit', fondo).textContent = 'Relevamiento enviado';
+    $('#env-sub', fondo).textContent = `${nombreLocal(reg.store_id)}${info.tareas ? `. Se ${info.tareas === 1 ? 'creó 1 tarea' : `crearon ${info.tareas} tareas`} para corregir.` : '.'}`;
+    $('#env-barra', fondo).style.width = '100%';
+    $('#env-txt', fondo).textContent = info.fallidas ? `${info.fallidas} ${info.fallidas === 1 ? 'archivo no se pudo subir' : 'archivos no se pudieron subir'}.` : 'Todo subido.';
+    btns.innerHTML = `<button class="btn primario ancho" id="env-ver">${ICON.pdf}Ver informe y PDF</button>
+      <button class="btn ancho fantasma" id="env-ok">Volver al inicio</button>`;
+    $('#env-ver', fondo).onclick = () => cerrar(`#/rel/${reg.id}`);
+    $('#env-ok', fondo).onclick = () => cerrar('#/');
+    return;
+  }
+  ico.innerHTML = `<span class="envio-nube">${ICON.nube}</span>`;
+  const faltan = quedo.fotos.filter(f => !f.subida).length;
+  $('#env-tit', fondo).textContent = quedo.subido ? 'Las respuestas llegaron' : 'Quedó guardado en el celular';
+  $('#env-sub', fondo).textContent = quedo.subido
+    ? `Faltan subir ${faltan} ${faltan === 1 ? 'archivo' : 'archivos'}. Se suben solos cuando haya mejor señal, con la app abierta.`
+    : 'No se perdió nada. Se manda solo cuando vuelva la señal, con la app abierta.';
+  $('#env-txt', fondo).textContent = navigator.onLine ? (quedo.error || '') : 'Sin conexión';
+  btns.innerHTML = `${navigator.onLine ? `<button class="btn primario ancho" id="env-otra">${ICON.sync}Probar de nuevo</button>` : ''}
+    ${quedo.subido ? `<button class="btn ancho" id="env-ver">Ver informe</button>` : ''}
+    <button class="btn ancho fantasma" id="env-ok">Cerrar</button>`;
+  const otra = $('#env-otra', fondo);
+  if (otra) otra.onclick = () => { cerrar(); pantallaEnvio(reg); };
+  const ver = $('#env-ver', fondo);
+  if (ver) ver.onclick = () => cerrar(`#/rel/${reg.id}`);
+  $('#env-ok', fondo).onclick = () => cerrar('#/pendientes');
 }
 
 async function actualizarContador() {
@@ -402,7 +679,7 @@ function nav() {
     ['#/', 'Inicio', ICON.inicio, h === '#/' || h === '#'],
     ['#/locales', 'Locales', ICON.locales, h.startsWith('#/locales') || h.startsWith('#/local/')],
     ['#/tareas', 'Tareas', ICON.tareas, h.startsWith('#/tarea'), 'tareas'],
-    ...(esJefe() ? [['#/resumen', 'Resumen', ICON.resumen, h.startsWith('#/resumen')]] : []),
+    ['#/resumen', 'Resumen', ICON.resumen, h.startsWith('#/resumen')],
     ['#/cuenta', 'Cuenta', ICON.cuenta, h.startsWith('#/cuenta') || h.startsWith('#/admin')]
   ];
   return `<nav class="nav">${links.map(([href, txt, ico, act, extra]) =>
@@ -585,15 +862,21 @@ async function avisosBorradores() {
 }
 
 async function vInicio() {
-  if (esJefe()) return vResumen();
+  if (esJefe()) {
+    try { return await vResumen(); }
+    catch (e) { if (!e.sinRed) throw e; /* sin señal: el jefe ve la lista para relevar */ }
+  }
 
   const periodo = periodoActual();
   let locales, offline = false;
   try {
-    locales = (await api(`/api/locales?periodo=${periodo}`)).locales;
-  } catch {
+    locales = (await api(`/api/locales?periodo=${periodo}`, { timeout: 8000 })).locales;
+    guardarLocales(periodo, locales);
+  } catch (e) {
+    if (!e.sinRed) throw e;
     offline = true;
-    locales = (S.cat?.stores || []).filter(s => (s.supervisor_ids || [s.supervisor_id]).includes(S.user.id)).map(s => ({ ...s, score: null }));
+    const mios = s => esJefe() || (s.supervisor_ids || [s.supervisor_id]).includes(S.user.id);
+    locales = localesGuardados(periodo) || (S.cat?.stores || []).filter(mios).map(s => ({ ...s, score: null }));
   }
   const hechos = locales.filter(l => l.score != null).length;
   const pend = locales.filter(l => l.score == null);
@@ -607,7 +890,7 @@ async function vInicio() {
         <p class="hero-sub">${mesLabel(periodo)}</p>
         <h2 class="hero-titulo">Hola, ${esc(primerNombre(S.user.name))}</h2>
         ${offline
-          ? `<p class="hero-nota">${ICON.nube}Sin conexión. Podés relevar igual: se envía cuando vuelva la señal.</p>`
+          ? `<p class="hero-nota">${ICON.nube}Sin conexión o con señal floja. Podés relevar igual: se guarda en el celular y se envía cuando vuelva la señal.</p>`
           : `<div class="hero-avance">
               <span class="hero-num">${hechos}<small>/${locales.length}</small></span>
               <span class="hero-lbl">locales relevados este mes</span>
@@ -629,16 +912,20 @@ async function vLocales() {
   const periodo = periodoActual();
   let locales, offline = false;
   try {
-    locales = (await api(`/api/locales?periodo=${periodo}`)).locales;
+    locales = (await api(`/api/locales?periodo=${periodo}`, { timeout: 8000 })).locales;
+    guardarLocales(periodo, locales);
     if (S.user.role === 'supervisor') {
       // el supervisor ve sus locales con puntaje y el resto del catálogo para poder cubrir otros
       const mios = new Set(locales.map(l => l.id));
       const otros = (S.cat?.stores || []).filter(s => !mios.has(s.id)).map(s => ({ ...s, score: null, escala: 'sd', ajeno: true }));
       locales = locales.concat(otros);
     }
-  } catch {
+  } catch (e) {
+    if (!e.sinRed) throw e;
     offline = true;
-    locales = (S.cat?.stores || []).map(s => ({ ...s, score: null }));
+    const guardados = new Map((localesGuardados(periodo) || []).map(l => [l.id, l]));
+    // sin señal cada fila va directo a relevar: el detalle del local necesita internet
+    locales = (S.cat?.stores || []).map(s => ({ ...s, score: null, ...(guardados.get(s.id) || {}), ajeno: true }));
   }
 
   const estado = { q: '', filtro: 'todos', orden: 'peor' };
@@ -664,7 +951,7 @@ async function vLocales() {
   return {
     titulo: 'Locales',
     html: `
-      ${offline ? '<p class="sub">Sin conexión: mostrando el catálogo guardado, sin puntajes.</p>' : ''}
+      ${offline ? '<p class="sub" style="margin-bottom:12px">Sin conexión: mostrando lo último guardado. Tocá Relevar para cargar uno nuevo.</p>' : ''}
       <div class="buscador">
         <label class="buscar">${ICON.buscar}<input type="search" id="q" placeholder="Buscar por nombre, código o supervisor" autocomplete="off" aria-label="Buscar locales"></label>
         <div class="chips" id="chips">
@@ -695,8 +982,35 @@ async function vLocales() {
   };
 }
 
+// Sin señal: ficha mínima con lo guardado en el celular, para poder relevar igual
+function vLocalSinRed(id) {
+  const l = S.cat?.stores.find(s => s.id === Number(id));
+  if (!l) throw errorRed();
+  const g = (localesGuardados(periodoActual()) || []).find(x => x.id === l.id);
+  return {
+    titulo: l.code,
+    atras: '#/locales',
+    html: `
+      <section class="hero">
+        <div class="hero-ficha">
+          <div>
+            <p class="hero-sub">${esc(l.code)}</p>
+            <h2 class="hero-titulo">${esc(nom(l.name))}</h2>
+            <p class="hero-meta">${esc(l.supervisor_name || 'Sin supervisor asignado')}</p>
+            ${g?.fecha ? `<p class="hero-meta">Relevado el ${fecha(g.fecha)}</p>` : ''}
+          </div>
+          ${anillo(g?.score ?? null, 'l')}
+        </div>
+        <a class="btn blanco ancho" href="#/relevar/${l.id}">Relevar ahora</a>
+      </section>
+      <p class="hero-nota" style="color:var(--soft);margin-top:16px">${ICON.nube}Sin conexión: el historial y el detalle se ven cuando vuelva la señal. Podés relevar igual.</p>`
+  };
+}
+
 async function vLocal(id) {
-  const d = await api(`/api/locales/${id}`);
+  let d;
+  try { d = await api(`/api/locales/${id}`, { timeout: 10000 }); }
+  catch (e) { if (e.sinRed) return vLocalSinRed(id); throw e; }
   const l = d.local;
   const ult = d.historial[0];
   const e = ult ? ult.escala : 'sd';
@@ -789,8 +1103,11 @@ async function vRelevar(storeId) {
           ${OPCIONES.map(([v, t]) => `<button type="button" data-v="${v}" class="op ${v} ${r.valor === v ? 'sel' : ''}" aria-pressed="${r.valor === v}">${t}</button>`).join('')}
         </div>
         <div class="item-extra">
-          <input type="text" class="coment" placeholder="Comentario (opcional)" value="${esc(r.comentario || '')}">
-          <label class="foto-btn">${ICON.camara}Foto<input type="file" accept="image/*" capture="environment" hidden></label>
+          <textarea class="coment" rows="1" placeholder="Comentario (opcional)">${esc(r.comentario || '')}</textarea>
+          <div class="item-botones">
+            <label class="foto-btn">${ICON.camara}Foto<input type="file" accept="image/*" capture="environment" hidden data-camara></label>
+            <button type="button" class="foto-btn" data-video>${ICON.video}Video</button>
+          </div>
         </div>
         <p class="hint-tarea" ${r.valor === 'fail' || r.valor === 'partial' ? '' : 'hidden'}>${ICON.reloj}Se va a crear una tarea para corregirlo en ${i.critical ? PLAZO_DIAS_CRITICO : PLAZO_DIAS} días</p>
         <div class="thumbs"></div>
@@ -846,20 +1163,27 @@ async function vRelevar(storeId) {
     guardarBorrador();
   };
 
+  // itemId 'google' = capturas de opiniones; el resto, fotos y videos de cada ítem
+  const claveDe = f => f.tipo === 'google' ? 'google' : f.item_id;
   const dibujarThumbs = itemId => {
-    const cont = $(`[data-item="${itemId}"] .thumbs`);
+    const cont = itemId === 'google' ? $('#google-thumbs') : $(`[data-item="${itemId}"] .thumbs`);
     if (!cont) return;
     cont.innerHTML = '';
-    b.fotos.filter(f => f.item_id === itemId).forEach(f => {
+    b.fotos.filter(f => claveDe(f) === itemId).forEach(f => {
       const d = document.createElement('div');
-      d.className = 'thumb';
+      const video = esVideo(f);
+      d.className = 'thumb' + (video ? ' thumb-video' : '');
       const url = URL.createObjectURL(f.blob);
-      d.innerHTML = `<img src="${url}" alt="Foto del ítem"><button type="button" aria-label="Quitar foto">${ICON.cruz}</button>`;
-      d.querySelector('button').onclick = () => {
+      d.innerHTML = video
+        ? `<span class="thumb-ver">${ICON.play}<small>${f.dur ? `0:${String(f.dur).padStart(2, '0')}` : 'Video'}</small></span><button type="button" aria-label="Quitar video">${ICON.cruz}</button>`
+        : `<img src="${url}" alt="Foto"><button type="button" aria-label="Quitar foto">${ICON.cruz}</button>`;
+      d.querySelector('button').onclick = ev => {
+        ev.stopPropagation();
         b.fotos = b.fotos.filter(x => x.pid !== f.pid);
         guardarBorrador();
         dibujarThumbs(itemId);
       };
+      d.onclick = () => verMedia(url, video);
       cont.appendChild(d);
     });
   };
@@ -889,6 +1213,12 @@ async function vRelevar(storeId) {
             ${sec.items.map(itemHtml).join('')}`).join('')}
         </section>`).join('')}
       <div class="pie-rel">
+        <div class="card form google-card">
+          <strong>Opiniones de Google</strong>
+          <p class="sub" style="margin:0">Capturas de las reseñas del local. Es el único lugar donde se pueden subir imágenes de la galería.</p>
+          <label class="foto-btn foto-ancha">${ICON.galeria}Elegir capturas<input type="file" id="google-input" accept="image/*" multiple hidden></label>
+          <div class="thumbs" id="google-thumbs"></div>
+        </div>
         <label class="form"><span style="font-weight:600">Observaciones generales</span>
           <textarea id="notas" placeholder="Algo que el local tenga que saber o corregir">${esc(b.notas)}</textarea>
         </label>
@@ -908,7 +1238,12 @@ async function vRelevar(storeId) {
       // los eventos van sobre .vista (se recrea en cada pantalla) para no acumular listeners
       const vista = $('.vista', app);
       items.forEach(i => dibujarThumbs(i.id));
+      dibujarThumbs('google');
       actualizarPuntaje();
+
+      // el comentario crece con lo que se escribe, así se lee entero
+      const ajustarAlto = t => { t.style.height = 'auto'; t.style.height = `${t.scrollHeight + 3}px`; };
+      $$('textarea.coment, #notas', vista).forEach(ajustarAlto);
 
       vista.addEventListener('click', e => {
         const nc = e.target.closest('[data-na-cap]');
@@ -918,6 +1253,18 @@ async function vRelevar(storeId) {
           const [cid, ...rest] = ns.dataset.naSec.split('|');
           const cap = caps.find(c => c.id === Number(cid));
           return alternarNA(cap.secciones.find(x => x.nombre === rest.join('|')).items);
+        }
+        const bv = e.target.closest('[data-video]');
+        if (bv) {
+          const id = Number(bv.closest('.item').dataset.item);
+          grabarVideo().then(async blob => {
+            if (!blob) return;
+            if (blob.size > 18 * 1024 * 1024) return toast('El video quedó muy pesado. Grabá uno más corto.');
+            b.fotos.push({ pid: crypto.randomUUID(), item_id: id, blob, tipo: 'video', dur: blob.duracion });
+            await idb.put('borradores', b);
+            dibujarThumbs(id);
+          }).catch(err => toast(err.message));
+          return;
         }
         const op = e.target.closest('.op');
         if (!op) return;
@@ -967,6 +1314,7 @@ async function vRelevar(storeId) {
       $('#firma-nombre').oninput = e => { b.firma_nombre = e.target.value; guardarBorrador(); };
 
       vista.addEventListener('input', e => {
+        if (e.target.tagName === 'TEXTAREA') ajustarAlto(e.target);
         if (e.target.classList.contains('coment')) {
           const id = Number(e.target.closest('.item').dataset.item);
           b.resp[id] = { ...(b.resp[id] || {}), comentario: e.target.value };
@@ -979,9 +1327,29 @@ async function vRelevar(storeId) {
 
       vista.addEventListener('change', async e => {
         if (e.target.type !== 'file' || !e.target.files[0]) return;
+        if (e.target.id === 'google-input') {
+          const files = [...e.target.files];
+          e.target.value = '';
+          for (const file of files) {
+            try {
+              // capturas de pantalla: un poco más grandes para que se lea el texto de la reseña
+              const blob = await comprimir(file, 1800, 0.8);
+              b.fotos.push({ pid: crypto.randomUUID(), item_id: null, blob, tipo: 'google' });
+            } catch (err) { toast(err.message); }
+          }
+          await idb.put('borradores', b);
+          dibujarThumbs('google');
+          return;
+        }
         const id = Number(e.target.closest('.item').dataset.item);
         const file = e.target.files[0];
         e.target.value = '';
+        // la foto del ítem tiene que ser de recién: si viene de la galería con fecha vieja, se rechaza
+        const minutos = file.lastModified ? (Date.now() - file.lastModified) / 60000 : 0;
+        if (minutos > FOTO_MAX_MIN) {
+          toast('Esa foto no es de recién. Sacala en el momento con la cámara.');
+          return;
+        }
         try {
           const blob = await comprimir(file);
           b.fotos.push({ pid: crypto.randomUUID(), item_id: id, blob });
@@ -1036,15 +1404,14 @@ async function vRelevar(storeId) {
           firma_png: b.firma_png || null,
           lat: b.lat,
           lng: b.lng,
-          fotos: b.fotos.map(f => ({ ...f, subida: false })),
+          fotos: b.fotos.map(f => ({ ...f, subida: false, fallida: null })),
           subido: false,
           score: calcularPuntaje(b.resp, items)
         };
         await idb.put('cola', reg);
         await idb.del('borradores', storeId);
-        toast(navigator.onLine ? 'Relevamiento guardado. Enviando…' : 'Guardado en el celular. Se envía cuando vuelva la señal.');
-        location.hash = '#/pendientes';
-        sincronizar();
+        $('#guardar').disabled = true;
+        pantallaEnvio(reg);
       };
 
       $('#descartar').onclick = async () => {
@@ -1062,23 +1429,28 @@ async function vRelevar(storeId) {
 async function vPendientes() {
   const cola = await idb.all('cola');
   const borr = await idb.all('borradores');
+  const estadoFila = r => {
+    const subidas = r.fotos.filter(f => f.subida).length;
+    const p = S.envio?.id === r.id ? S.envio : null;
+    if (p) return p.etapa === 'respuestas' ? 'Enviando las respuestas…' : `Subiendo archivos: ${p.hechas} de ${p.total}`;
+    return `${r.subido ? 'Respuestas enviadas' : 'Respuestas sin enviar'} · Archivos ${subidas} de ${r.fotos.length}`;
+  };
   return {
     titulo: 'Pendientes de enviar',
     atras: '#/',
     html: `
       ${!cola.length && !borr.length ? `<div class="vacio"><span class="vacio-ico">${ICON.check}</span><p>Está todo enviado.</p><a class="btn" href="#/">Ir al inicio</a></div>` : ''}
       ${cola.length ? `
-        <div class="lista">${cola.map(r => {
-          const subidas = r.fotos.filter(f => f.subida).length;
-          return `<div class="fila">
+        <p class="sub" style="margin:0 0 12px">Se envían solos cuando hay señal y la app está abierta. Si tenés señal, podés forzarlo con el botón.</p>
+        <div class="lista">${cola.map(r => `<div class="fila">
             ${anillo(r.score)}
             <span class="fila-txt"><strong>${esc(nombreLocal(r.store_id))}</strong>
-              <small>${fecha(r.creado)} · ${r.subido ? 'Respuestas enviadas' : 'Respuestas sin enviar'} · Fotos ${subidas} de ${r.fotos.length}</small>
-              ${r.error ? `<small class="error">${esc(r.error)}</small>` : ''}
+              <small>${fecha(r.creado)} · <span data-prog="${r.id}">${estadoFila(r)}</span></small>
+              ${r.error && S.envio?.id !== r.id ? `<small class="error">${esc(r.error)}</small>` : ''}
             </span>
-          </div>`;
-        }).join('')}</div>
-        <button class="btn primario ancho" style="margin-top:14px" id="sync" ${navigator.onLine ? '' : 'disabled'}>
+            ${r.subido ? `<a class="btn chico" href="#/rel/${r.id}">Ver</a>` : ''}
+          </div>`).join('')}</div>
+        <button class="btn primario ancho" style="margin-top:14px" id="sync" ${navigator.onLine && !S.syncing ? '' : 'disabled'}>
           ${S.syncing ? 'Enviando…' : navigator.onLine ? 'Enviar ahora' : 'Sin conexión'}</button>` : ''}
       ${borr.length ? `
         <div class="bloque"><h2>Sin terminar</h2>
@@ -1089,6 +1461,14 @@ async function vPendientes() {
             </div>`).join('')}</div>
         </div>` : ''}`,
     montar() {
+      // progreso en vivo mientras se envía
+      const oyente = p => {
+        if (!location.hash.startsWith('#/pendientes')) return oyentesEnvio.delete(oyente);
+        if (!p) return;
+        const el = $(`[data-prog="${p.id}"]`);
+        if (el) el.textContent = p.etapa === 'respuestas' ? 'Enviando las respuestas…' : `Subiendo archivos: ${p.hechas} de ${p.total}`;
+      };
+      oyentesEnvio.add(oyente);
       const b = $('#sync');
       if (b) b.onclick = () => { b.disabled = true; b.textContent = 'Enviando…'; sincronizar(); };
     }
@@ -1100,7 +1480,9 @@ async function vPendientes() {
 async function vRelevamiento(id) {
   const d = await api(`/api/relevamientos/${id}`);
   const r = d.relevamiento;
-  const fotosDe = itemId => d.fotos.filter(f => f.item_id === itemId);
+  const fotosDe = itemId => d.fotos.filter(f => f.item_id === itemId && f.kind !== 'google');
+  const google = d.fotos.filter(f => f.kind === 'google');
+  const generales = d.fotos.filter(f => f.item_id == null && f.kind !== 'google');
   const fallas = d.respuestas.filter(x => x.value === 'fail' || x.value === 'partial');
   const respHtml = x => `
     <div class="resp">
@@ -1108,8 +1490,7 @@ async function vRelevamiento(id) {
         <p>${esc(x.text)}${x.value === 'partial' ? '<span class="tag-parcial">Parcial</span>' : ''}${x.critical ? '<span class="tag-crit">Crítico</span>' : ''}</p>
         <span class="pts">${x.value === 'na' ? 'N/A' : `${fmtPts(x.earned ?? x.weight * (VALOR_PUNTOS[x.value] ?? 0))}/${fmtPts(x.weight)}`}</span></div>
       ${x.comment ? `<p class="coment">${esc(x.comment)}</p>` : ''}
-      ${fotosDe(x.item_id).length ? `<div class="thumbs">${fotosDe(x.item_id).map(f =>
-        `<div class="thumb"><a href="${esc(fotoSrc(f))}" target="_blank" rel="noopener"><img loading="lazy" src="${esc(fotoSrc(f))}" alt="Foto"></a></div>`).join('')}</div>` : ''}
+      ${fotosDe(x.item_id).length ? `<div class="thumbs">${fotosDe(x.item_id).map(miniRemota).join('')}</div>` : ''}
     </div>`;
   const porCap = {};
   d.respuestas.forEach(x => (porCap[x.capitulo] ||= []).push(x));
@@ -1131,7 +1512,10 @@ async function vRelevamiento(id) {
         </div>
         ${r.notes ? `<p class="hero-notas">${esc(r.notes)}</p>` : ''}
       </section>
-      <button class="btn primario ancho" id="pdf" style="margin-top:14px">${ICON.pdf}Descargar informe PDF</button>
+      <div class="pdf-btns">
+        <button class="btn primario" id="pdf">${ICON.pdf}Descargar PDF</button>
+        ${navigator.share ? `<button class="btn" id="pdf-compartir">${ICON.compartir}Compartir</button>` : ''}
+      </div>
       <div class="bloque"><h2>Por capítulo</h2><div class="card">
         ${d.capitulos.map(c => `<div class="cap-fila"><span>${esc(c.nombre)}<small class="sub">${c.posibles ? ` ${fmtPts(c.puntos)}/${fmtPts(c.posibles)} ptos, pesa ${fmtPeso(c.peso)}%` : ' No aplica'}</small></span><b class="txt-${c.escala}">${c.posibles ? fmt(c.score) : 'N/A'}</b>
           <div class="barra"><span class="${c.escala}" style="width:${c.score ?? 0}%"></span></div></div>`).join('')}
@@ -1139,6 +1523,10 @@ async function vRelevamiento(id) {
       <div class="bloque"><h2>Para corregir (${fallas.length})</h2>
         ${fallas.length ? `<div class="card">${fallas.map(respHtml).join('')}</div>` : '<div class="card sub">Sin incumplimientos.</div>'}
       </div>
+      ${google.length ? `<div class="bloque"><h2>Opiniones de Google (${google.length})</h2>
+        <div class="card"><div class="thumbs" style="margin-top:0">${google.map(miniRemota).join('')}</div></div></div>` : ''}
+      ${generales.length ? `<div class="bloque"><h2>Fotos generales</h2>
+        <div class="card"><div class="thumbs" style="margin-top:0">${generales.map(miniRemota).join('')}</div></div></div>` : ''}
       ${r.sign_name || r.sign_png ? `<div class="bloque"><h2>Conformidad del encargado</h2><div class="card firma-ver">
         ${r.sign_png ? `<img src="${r.sign_png}" alt="Firma de ${esc(r.sign_name || 'el encargado')}">` : ''}
         <p>${esc(r.sign_name || 'Sin nombre')}</p></div></div>` : ''}
@@ -1147,16 +1535,30 @@ async function vRelevamiento(id) {
       <div class="bloque"><h2>Relevamiento completo</h2>
         ${Object.entries(porCap).map(([cap, xs]) => `<details class="card" style="margin-bottom:10px"><summary>${esc(cap)}</summary>${xs.map(respHtml).join('')}</details>`).join('')}
       </div>`,
-    montar() {
-      $('#pdf').onclick = async e => {
-        const btn = e.currentTarget;
+    montar(app) {
+      // el PDF se arma una sola vez y se reusa para descargar o compartir
+      let pdf = null;
+      const armar = async btn => {
+        const antes = btn.innerHTML;
         btn.disabled = true;
-        btn.innerHTML = `${ICON.pdf}Armando el informe…`;
-        try { await informePDF(d); }
-        catch (err) { toast('No se pudo generar el PDF: ' + err.message); }
-        btn.disabled = false;
-        btn.innerHTML = `${ICON.pdf}Descargar informe PDF`;
+        btn.innerHTML = `${ICON.pdf}Armando…`;
+        try { pdf ||= await informePDF(d); return pdf; }
+        catch (err) { toast('No se pudo generar el PDF: ' + err.message); return null; }
+        finally { btn.disabled = false; btn.innerHTML = antes; }
       };
+      $('#pdf').onclick = async e => {
+        const p = await armar(e.currentTarget);
+        if (p) bajarPDF(p);
+      };
+      const comp = $('#pdf-compartir');
+      if (comp) comp.onclick = async e => {
+        const p = await armar(e.currentTarget);
+        if (p) compartirPDF(p, `Relevamiento ${nom(r.store_name)}: ${fmt(r.score)} puntos (${ESCALAS[r.escala]}), ${fecha(r.client_created_at)}`);
+      };
+      $('.vista', app).addEventListener('click', e => {
+        const v = e.target.closest('[data-video-src]');
+        if (v) verVideoRemoto(v.dataset.videoSrc, v);
+      });
     }
   };
 }
@@ -1166,20 +1568,23 @@ async function vRelevamiento(id) {
 async function vResumen() {
   S.periodoResumen ||= periodoActual();
   const p = S.periodoResumen;
-  const d = await api(`/api/resumen?periodo=${p}`);
+  const d = await api(`/api/resumen?periodo=${p}`, { timeout: 20000 });
   const tot = d.total || 1;
+  const jefe = esJefe();
+  const cuando = l => l.fecha ? `${fecha(l.fecha)} · ` : '';
   const maxTend = Math.max(1, ...d.tendencia.map(t => t.relevados));
 
   const listaCorta = arr => arr.length ? `<div class="lista">${arr.map(l => `
     <a class="fila" href="#/local/${l.id}">
       ${anillo(l.score)}
-      <span class="fila-txt"><strong>${esc(nom(l.name))}</strong><small>${esc(l.code)} · ${esc(l.supervisor_name || 'Sin supervisor')}</small></span>
+      <span class="fila-txt"><strong>${esc(nom(l.name))}</strong><small>${cuando(l)}${esc(l.code)} · ${esc(l.supervisor_name || 'Sin supervisor')}</small></span>
       <span class="fila-der">${l.delta != null ? `<span class="delta baja">${ICON.baja}${fmt(Math.abs(l.delta))}</span>` : ''}<span class="flecha">${ICON.derecha}</span></span>
     </a>`).join('')}</div>` : '<div class="card sub">Sin datos para este mes.</div>';
 
   return {
-    titulo: 'Resumen',
+    titulo: jefe ? 'Resumen' : 'Mi resumen',
     html: `
+      ${jefe ? '' : '<p class="sub" style="margin:0 0 12px">Solo tus locales asignados.</p>'}
       <div class="periodo">
         <input type="month" id="periodo" value="${p}" max="${periodoActual()}" aria-label="Mes">
         <a class="btn chico" href="${API}/api/exportar?periodo=${p}&t=${encodeURIComponent(S.token)}" download>${ICON.descarga}Exportar a Excel</a>
@@ -1189,7 +1594,7 @@ async function vResumen() {
         <div class="hero-resumen">
           <div class="hero-bloque">
             ${anillo(d.promedio, 'l')}
-            <div><span class="hero-lbl">Promedio</span>${chipEscala(escala(d.promedio))}</div>
+            <div><span class="hero-lbl">${jefe ? 'Promedio de la compañía' : 'Promedio de tus locales'}</span>${chipEscala(escala(d.promedio))}</div>
           </div>
           <div class="hero-bloque">
             <div class="hero-cob">
@@ -1239,7 +1644,7 @@ async function vResumen() {
             ${arr.map(l => `
               <a class="fila" href="#/local/${l.id}">
                 ${anillo(l.score)}
-                <span class="fila-txt"><strong>${esc(nom(l.name))}</strong><small>${esc(l.code)} · ${esc(l.supervisor_name || 'Sin supervisor')}${tipo === 'prev' ? ` · ${l.prev_period ? `Último: ${mesLabel(l.prev_period)}` : 'Nunca relevado'}` : ''}</small></span>
+                <span class="fila-txt"><strong>${esc(nom(l.name))}</strong><small>${esc(l.code)} · ${esc(l.supervisor_name || 'Sin supervisor')}${tipo === 'prev' ? ` · ${l.fecha ? `Último: ${fecha(l.fecha)}` : l.prev_period ? `Último: ${mesLabel(l.prev_period)}` : 'Nunca relevado'}` : (l.fecha ? ` · ${fecha(l.fecha)}` : '')}</small></span>
                 <span class="fila-der">${tipo === 'delta' && l.delta != null ? `<span class="delta baja">${ICON.baja}${fmt(Math.abs(l.delta))}</span>` : (l.prev_score != null && tipo === 'prev' ? `<span class="sub">${fmt(l.prev_score)}</span>` : '')}<span class="flecha">${ICON.derecha}</span></span>
               </a>`).join('')}
           </details>`).join('')}
@@ -1258,6 +1663,7 @@ async function vResumen() {
 
       <div class="bloque">
         <h2>Supervisores</h2>
+        <p class="sub" style="margin:-6px 0 12px">Por locales asignados a cada supervisor, sin importar con qué cuenta se cargó el relevamiento.</p>
         <div class="card">${d.supervisores.map(s => `
           <div class="sup-fila">
             <strong>${esc(s.nombre)}</strong>
@@ -1272,10 +1678,26 @@ async function vResumen() {
         <div><h2 class="h-bloque">Mejores 10</h2>${listaCorta(d.mejores)}</div>
       </div>
 
+      ${(d.capitulos || []).length ? `
       <div class="bloque">
-        <h2>Ítems más incumplidos</h2>
+        <h2>Cumplimiento por capítulo${jefe ? ' en la cadena' : ''}</h2>
+        <div class="card">${d.capitulos.map(c => `
+          <div class="cap-fila"><span>${esc(c.nombre)}<small class="sub"> ${c.fallas} no cumple · ${c.parciales} parcial</small></span>
+            <b class="txt-${c.escala}">${fmt(c.score)}</b>
+            <div class="barra"><span class="${c.escala}" style="width:${c.score}%"></span></div></div>`).join('')}
+        </div>
+      </div>` : ''}
+
+      <div class="bloque">
+        <h2>Ítems desaprobados${jefe ? ' en la cadena' : ''}</h2>
+        <p class="sub" style="margin:-6px 0 12px">Último relevamiento de cada local en el mes. Tocá un ítem para ver en qué locales falló.</p>
         ${d.items.length ? `<div class="card">${d.items.map(i => `
-          <div class="item-fail"><b>${i.n}</b><div>${esc(i.text)}<small>${esc(i.capitulo)}</small></div></div>`).join('')}</div>`
+          <details class="item-fail">
+            <summary><b>${i.n}</b><div>${esc(i.text)}${i.critical ? '<span class="tag-crit">Crítico</span>' : ''}
+              <small>${esc(i.capitulo)} · ${i.no_cumple ?? i.n} no cumple${i.parcial ? `, ${i.parcial} parcial` : ''} · ${d.relevados ? Math.round(i.n / d.relevados * 100) : 0}% de los locales relevados</small></div></summary>
+            ${(i.locales || []).length ? `<div class="item-fail-locales">${i.locales.map(l => `
+              <a href="#/rel/${esc(l.audit_id)}"><span class="punto ${l.valor === 'fail' ? 'critico' : 'observado'}"></span>${esc(l.code)} · ${esc(nom(l.name))}<small>${l.valor === 'fail' ? 'No cumple' : 'Parcial'}</small></a>`).join('')}</div>` : ''}
+          </details>`).join('')}</div>`
           : '<div class="card sub">Sin incumplimientos este mes.</div>'}
       </div>`,
     montar() {
@@ -1535,7 +1957,7 @@ async function adminUsuarios() {
         titulo: 'Cargar varios usuarios',
         html: `<p class="sub" style="margin:0">Una fila por usuario: nombre, email y rol (supervisor, jefe o admin). Los emails que ya existen se saltean.</p>
           <pre class="plantilla">nombre;email;rol
-Marina Herber;marina@luccianos.com.ar;supervisor</pre>
+Ana Pérez;ana.perez@luccianos.com.ar;supervisor</pre>
           <textarea id="m-csv" placeholder="Pegá acá las filas desde Excel o el Bloc de notas"></textarea>
           <label>Clave inicial para todos (mínimo 8 caracteres)<input id="m-clave" autocomplete="off"></label>
           <div id="m-res"></div>`,
@@ -2125,11 +2547,11 @@ function cargarJsPDF() {
 }
 
 // Baja la foto de Drive y la achica para que el PDF no pese de más
-async function fotoParaPDF(f) {
+async function fotoParaPDF(f, max = 700) {
   const r = await fetch(fotoSrc(f));
   if (!r.ok) throw new Error('foto');
   const img = await createImageBitmap(await r.blob());
-  const max = 700, k = Math.min(1, max / Math.max(img.width, img.height));
+  const k = Math.min(1, max / Math.max(img.width, img.height));
   const c = document.createElement('canvas');
   c.width = Math.round(img.width * k);
   c.height = Math.round(img.height * k);
@@ -2158,6 +2580,7 @@ async function informePDF(d) {
   const logo = await imgLocal('logo-blanco.png').catch(() => null);
   const fotos = {};
   for (const f of d.fotos) {
+    if (String(f.mime || '').startsWith('video/') || f.kind === 'google') continue;
     if (!fallas.some(x => x.item_id === f.item_id)) continue;
     (fotos[f.item_id] ||= []);
     if (fotos[f.item_id].length >= 3) continue;
@@ -2235,7 +2658,8 @@ async function informePDF(d) {
     const cm = x.comment ? lineas(x.comment, W - 2 * M - 24) : [];
     const fs = fotos[x.item_id] || [];
     const t = tareaDe(x.item_id);
-    const alto = 16 + ls.length * 13 + 14 + cm.length * 12 + (fs.length ? 118 : 0) + (t ? 16 : 0) + 10;
+    const nVid = d.fotos.filter(f => f.item_id === x.item_id && String(f.mime || '').startsWith('video/')).length;
+    const alto = 16 + ls.length * 13 + 14 + cm.length * 12 + (fs.length ? 118 : 0) + (nVid ? 14 : 0) + (t ? 16 : 0) + 10;
     salto(alto);
     const y0 = y;
     doc.setFillColor(...(x.value === 'partial' ? COL.observado : COL.critico)); doc.rect(M, y0, 3, alto - 10, 'F');
@@ -2253,6 +2677,11 @@ async function informePDF(d) {
         x0 += w + 8;
       });
       y += 118;
+    }
+    if (nVid) {
+      doc.setFont('helvetica', 'italic'); doc.setFontSize(8.5); doc.setTextColor(...SOFT);
+      texto(`${nVid === 1 ? 'Tiene un video' : `Tiene ${nVid} videos`}: se ve en la app.`, M + 14, y + 4);
+      y += 14;
     }
     if (t) {
       doc.setFont('helvetica', 'bold'); doc.setFontSize(9); doc.setTextColor(...INK);
@@ -2273,6 +2702,27 @@ async function informePDF(d) {
     doc.setFillColor(...PAPER); doc.roundedRect(M, y, W - 2 * M, ls.length * 13 + 20, 8, 8, 'F');
     doc.setFont('helvetica', 'normal'); doc.setFontSize(10); doc.setTextColor(...SOFT);
     doc.text(ls, M + 14, y + 17); y += ls.length * 13 + 30;
+  }
+
+  // ---- capturas de opiniones de Google
+  const capturas = [];
+  for (const f of d.fotos.filter(x => x.kind === 'google').slice(0, 6)) {
+    try { capturas.push(await fotoParaPDF(f, 900)); } catch { /* sigue sin ella */ }
+  }
+  if (capturas.length) {
+    salto(240);
+    y += 10;
+    doc.setTextColor(...INK); doc.setFont('helvetica', 'bold'); doc.setFontSize(13);
+    texto('Opiniones de Google', M, y); y += 14;
+    let x0 = M;
+    const h = 220;
+    for (const c of capturas) {
+      const w = Math.min(W - 2 * M, h * c.w / c.h);
+      if (x0 + w > W - M) { x0 = M; y += h + 10; salto(h + 10); }
+      doc.addImage(c.data, 'JPEG', x0, y, w, h);
+      x0 += w + 10;
+    }
+    y += h + 20;
   }
 
   // ---- firma
@@ -2304,7 +2754,33 @@ async function informePDF(d) {
     texto(`Página ${i} de ${n}`, W - M, H - 20, { align: 'right' });
   }
 
-  doc.save(`Informe_${r.code}_${r.period}.pdf`);
+  return { blob: doc.output('blob'), nombre: `Informe_${r.code}_${r.period}.pdf` };
+}
+
+// En el iPhone con la app instalada, "descargar" no anda bien: ahí se usa el menú de compartir,
+// que deja guardarlo en Archivos o mandarlo por WhatsApp
+const appInstaladaIOS = () => navigator.standalone === true;
+function bajarPDF({ blob, nombre }) {
+  if (appInstaladaIOS() && navigator.canShare?.({ files: [new File([blob], nombre, { type: 'application/pdf' })] })) {
+    return compartirPDF({ blob, nombre });
+  }
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = nombre;
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 4000);
+}
+async function compartirPDF({ blob, nombre }, texto = '') {
+  const file = new File([blob], nombre, { type: 'application/pdf' });
+  try {
+    if (navigator.canShare?.({ files: [file] })) await navigator.share({ files: [file], title: nombre, text: texto });
+    else { toast('Este celular no permite compartir archivos: se descarga.'); bajarPDF({ blob, nombre }); }
+  } catch (e) {
+    // si armar el PDF tardó, el celular ya no considera que fue un toque tuyo: el segundo toque es instantáneo
+    if (e.name === 'NotAllowedError') toast('El PDF ya está listo: tocá el botón de nuevo.');
+    else if (e.name !== 'AbortError') toast('No se pudo compartir: ' + e.message);
+  }
 }
 
 /* ================================================================ vistas: cuenta */
@@ -2373,6 +2849,8 @@ function vCuenta() {
 
 window.addEventListener('hashchange', render);
 window.addEventListener('online', () => { toast('Volvió la conexión'); sincronizar(); });
+// al volver a la app (desbloquear el celular, cambiar de app) se retoma lo que haya quedado sin enviar
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') sincronizar(); });
 setInterval(sincronizar, 60000);
 
 if ('serviceWorker' in navigator) {
