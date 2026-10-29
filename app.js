@@ -4,7 +4,7 @@
 
 // ↓↓↓ CAMBIAR por la URL de tu Worker (sin barra final)
 const API = 'https://relevamientos-api.lucciano-viaticos.workers.dev';
-const VERSION = '2.5.0';
+const VERSION = '2.6.0';
 const PLAZO_DIAS = 7;          // mismo plazo que el Worker para corregir un incumplimiento
 const PLAZO_DIAS_CRITICO = 2;
 const DISTANCIA_MAX = 300; // metros: más lejos que esto, se marca como "cargado fuera del local"
@@ -277,6 +277,13 @@ async function cargarCatalogo() {
   return d;
 }
 
+// Al cambiar la propia clave el servidor cierra las demás sesiones y le da a este celular una nueva
+function renovarSesion(r) {
+  if (!r?.token) return;
+  S.token = r.token;
+  localStorage.setItem('rl_token', r.token);
+}
+
 function entrar(d) {
   S.token = d.token;
   S.user = d.user;
@@ -427,6 +434,19 @@ async function grabarVideo() {
         if (s >= VIDEO_MAX_SEG && rec.state === 'recording') rec.stop();
       }, 250);
     };
+  });
+}
+
+function duracionVideo(file) {
+  return new Promise(ok => {
+    const v = document.createElement('video');
+    const url = URL.createObjectURL(file);
+    const fin = d => { URL.revokeObjectURL(url); ok(d); };
+    v.preload = 'metadata';
+    v.onloadedmetadata = () => fin(isFinite(v.duration) ? Math.round(v.duration) : null);
+    v.onerror = () => fin(null);
+    setTimeout(() => fin(null), 4000);
+    v.src = url;
   });
 }
 
@@ -605,6 +625,9 @@ async function pantallaEnvio(reg) {
 
   const quedo = await idb.get('cola', reg.id);
   const ico = $('.envio-ico', fondo), btns = $('#env-btns', fondo);
+  // terminado el envío, si se navega con "atrás" la pantalla se cierra sola
+  const alNavegar = () => { window.removeEventListener('hashchange', alNavegar); if (fondo.isConnected) cerrar(); };
+  window.addEventListener('hashchange', alNavegar);
   if (!quedo) {
     const info = S.enviados?.[reg.id] || {};
     ico.innerHTML = anillo(info.score ?? reg.score, 'l');
@@ -1058,7 +1081,7 @@ async function vLocal(id) {
         ${d.historial.length ? `<div class="lista">${d.historial.map(h => `
           <a class="fila" href="#/rel/${h.id}">
             ${anillo(h.score)}
-            <span class="fila-txt"><strong>${mesLabel(h.period)}</strong><small>${fecha(h.fecha)} · ${esc(h.usuario)}${h.distance_m > DISTANCIA_MAX ? ` · a ${fmtDist(h.distance_m)} del local` : ''}</small></span>
+            <span class="fila-txt"><strong>${mesLabel(h.period)}</strong><small>${fecha(h.fecha)} · ${esc(h.usuario)}${h.virtual ? ' · Virtual' : ''}${h.distance_m > DISTANCIA_MAX ? ` · a ${fmtDist(h.distance_m)} del local` : ''}</small></span>
             <span class="fila-der"><span class="flecha">${ICON.derecha}</span></span>
           </a>`).join('')}</div>` : '<div class="vacio"><p>Este local todavía no tiene relevamientos.</p></div>'}
       </div>`
@@ -1072,6 +1095,8 @@ async function vRelevar(storeId) {
   if (!S.cat) await cargarCatalogo();
   const local = S.cat.stores.find(s => s.id === storeId);
   if (!local) throw new Error('Ese local no está en el catálogo guardado. Entrá a Cuenta y tocá "Actualizar datos".');
+  // Auditoría virtual (locales que se auditan a distancia): fotos y videos pueden venir de la galería
+  const virtual = !!local.virtual;
   if (!S.cat.items.length) throw new Error('El checklist está vacío. El administrador tiene que cargarlo desde Admin.');
 
   let b = await idb.get('borradores', storeId);
@@ -1105,8 +1130,10 @@ async function vRelevar(storeId) {
         <div class="item-extra">
           <textarea class="coment" rows="1" placeholder="Comentario (opcional)">${esc(r.comentario || '')}</textarea>
           <div class="item-botones">
-            <label class="foto-btn">${ICON.camara}Foto<input type="file" accept="image/*" capture="environment" hidden data-camara></label>
-            <button type="button" class="foto-btn" data-video>${ICON.video}Video</button>
+            <label class="foto-btn">${ICON.camara}Foto<input type="file" accept="image/*" ${virtual ? 'multiple' : 'capture="environment"'} hidden data-camara></label>
+            ${virtual
+              ? `<label class="foto-btn">${ICON.video}Video<input type="file" accept="video/*" hidden data-video-archivo></label>`
+              : `<button type="button" class="foto-btn" data-video>${ICON.video}Video</button>`}
           </div>
         </div>
         <p class="hint-tarea" ${r.valor === 'fail' || r.valor === 'partial' ? '' : 'hidden'}>${ICON.reloj}Se va a crear una tarea para corregirlo en ${i.critical ? PLAZO_DIAS_CRITICO : PLAZO_DIAS} días</p>
@@ -1175,7 +1202,7 @@ async function vRelevar(storeId) {
       d.className = 'thumb' + (video ? ' thumb-video' : '');
       const url = URL.createObjectURL(f.blob);
       d.innerHTML = video
-        ? `<span class="thumb-ver">${ICON.play}<small>${f.dur ? `0:${String(f.dur).padStart(2, '0')}` : 'Video'}</small></span><button type="button" aria-label="Quitar video">${ICON.cruz}</button>`
+        ? `<span class="thumb-ver">${ICON.play}<small>${f.dur ? `${Math.floor(f.dur / 60)}:${String(f.dur % 60).padStart(2, '0')}` : 'Video'}</small></span><button type="button" aria-label="Quitar video">${ICON.cruz}</button>`
         : `<img src="${url}" alt="Foto"><button type="button" aria-label="Quitar foto">${ICON.cruz}</button>`;
       d.querySelector('button').onclick = ev => {
         ev.stopPropagation();
@@ -1194,7 +1221,7 @@ async function vRelevar(storeId) {
     html: `
       <div class="rel-head">
         <div class="rel-head-row">
-          <div><strong>${esc(nom(local.name))}</strong><small id="geo">${ICON.pin}Buscando ubicación…</small><small class="num prog" id="live-prog"></small></div>
+          <div><strong>${esc(nom(local.name))}</strong><small id="geo">${virtual ? `${ICON.galeria}Auditoría virtual: fotos y videos desde la galería` : `${ICON.pin}Buscando ubicación…`}</small><small class="num prog" id="live-prog"></small></div>
           <div class="rel-score" id="live-score">${anillo(null, 'm')}</div>
         </div>
         <div class="barra" style="height:4px;margin-top:8px"><span id="live-bar"></span></div>
@@ -1342,27 +1369,44 @@ async function vRelevar(storeId) {
           return;
         }
         const id = Number(e.target.closest('.item').dataset.item);
-        const file = e.target.files[0];
+        const files = [...e.target.files];
         e.target.value = '';
-        // la foto del ítem tiene que ser de recién: si viene de la galería con fecha vieja, se rechaza
-        const minutos = file.lastModified ? (Date.now() - file.lastModified) / 60000 : 0;
-        if (minutos > FOTO_MAX_MIN) {
-          toast('Esa foto no es de recién. Sacala en el momento con la cámara.');
-          return;
-        }
-        try {
-          const blob = await comprimir(file);
-          b.fotos.push({ pid: crypto.randomUUID(), item_id: id, blob });
+
+        // video elegido de la galería (solo en auditorías virtuales)
+        if (e.target.hasAttribute('data-video-archivo')) {
+          const file = files[0];
+          if (!String(file.type).startsWith('video/')) return toast('Ese archivo no es un video.');
+          if (file.size > 18 * 1024 * 1024) return toast('El video pesa más de 18 MB. Elegí uno más corto o recortalo antes.');
+          const dur = await duracionVideo(file);
+          b.fotos.push({ pid: crypto.randomUUID(), item_id: id, blob: file, tipo: 'video', dur });
           await idb.put('borradores', b);
           dibujarThumbs(id);
-        } catch (err) {
-          toast(err.message);
+          return;
         }
+
+        for (const file of files) {
+          // en un local presencial la foto tiene que ser de recién: si viene de la galería con fecha vieja, se rechaza
+          const minutos = file.lastModified ? (Date.now() - file.lastModified) / 60000 : 0;
+          if (!virtual && minutos > FOTO_MAX_MIN) {
+            toast('Esa foto no es de recién. Sacala en el momento con la cámara.');
+            continue;
+          }
+          try {
+            const blob = await comprimir(file);
+            b.fotos.push({ pid: crypto.randomUUID(), item_id: id, blob, ...(virtual ? { tipo: 'galeria' } : {}) });
+          } catch (err) {
+            toast(err.message);
+          }
+        }
+        await idb.put('borradores', b);
+        dibujarThumbs(id);
       });
 
-      // Ubicación
+      // Ubicación (en una auditoría virtual no se pide: no se está en el local)
       const geo = $('#geo');
-      if (!navigator.geolocation) {
+      if (virtual) {
+        // nada que hacer
+      } else if (!navigator.geolocation) {
         geo.innerHTML = ICON.pin + 'Este dispositivo no da ubicación';
       } else {
         navigator.geolocation.getCurrentPosition(pos => {
@@ -1504,7 +1548,7 @@ async function vRelevamiento(id) {
           <div>
             <p class="hero-sub">${esc(r.code)}</p>
             <h2 class="hero-titulo">${esc(nom(r.store_name))}</h2>
-            <p class="hero-meta">${fecha(r.client_created_at)} por ${esc(r.usuario)}</p>
+            <p class="hero-meta">${fecha(r.client_created_at)} por ${esc(r.usuario)}${r.virtual ? ' · Auditoría virtual' : ''}</p>
             ${r.distance_m > DISTANCIA_MAX ? `<p class="hero-alerta">${ICON.alerta}Cargado a ${fmtDist(r.distance_m)} del local</p>` : ''}
             ${chipEscala(r.escala)}
           </div>
@@ -1926,8 +1970,8 @@ async function adminUsuarios() {
         const datos = { nombre, rol };
         if (clave) datos.clave = clave;
         if ($('#u-activo', hoja)) datos.activo = $('#u-activo', hoja).checked;
-        await post(`/api/admin/usuarios/${u.id}`, datos, 'PUT');
-        toast('Usuario actualizado');
+        renovarSesion(await post(`/api/admin/usuarios/${u.id}`, datos, 'PUT'));
+        toast(clave ? 'Usuario actualizado. Las sesiones abiertas con la clave anterior se cerraron.' : 'Usuario actualizado');
       } else {
         const email = valor(hoja, '#u-email');
         if (!emailValido(email)) throw new Error('El email tiene que tener un @ y un dominio');
@@ -1984,7 +2028,8 @@ async function adminLocales() {
     ['Propio', 'Propios', l => l.active && l.type === 'Propio'],
     ['Franquicia', 'Franquicias', l => l.active && l.type === 'Franquicia'],
     ['sinsup', 'Sin supervisor', l => l.active && !l.supervisores.length],
-    ['sincoord', 'Sin ubicación', l => l.active && l.lat == null],
+    ['sincoord', 'Sin ubicación', l => l.active && l.lat == null && !l.virtual],
+    ['virtual', 'Virtuales', l => l.active && l.virtual],
     ['baja', 'De baja', l => !l.active]
   ];
   const dibujar = () => {
@@ -1995,7 +2040,7 @@ async function adminLocales() {
         <span class="codigo-chip">${esc(x.code)}</span>
         <span class="fila-txt"><strong>${esc(nom(x.name))}</strong>
           <small>${x.supervisores.length ? esc(x.supervisor_name) : '<span class="txt-urgente">Sin supervisor</span>'}${x.country && x.country !== 'Argentina' ? ` · ${esc(x.country)}` : ''}</small></span>
-        ${x.lat == null ? `<span class="aviso-chip" title="Sin ubicación">${ICON.pin}</span>` : ''}
+        ${x.virtual ? '<span class="virtual-chip">Virtual</span>' : x.lat == null ? `<span class="aviso-chip" title="Sin ubicación">${ICON.pin}</span>` : ''}
         <span class="flecha">${ICON.derecha}</span>
       </button>`).join('') : '<div class="vacio"><p>Ningún local coincide.</p></div>';
   };
@@ -2027,6 +2072,8 @@ async function adminLocales() {
           <a class="btn chico fantasma" id="l-mapa" target="_blank" rel="noopener">Ver en el mapa</a>
         </div>
         <small class="ayuda">Si no estás en el local: en Google Maps, clic derecho sobre el local y pegá acá el primer renglón.</small></div>
+      <div class="campo"><label class="interruptor"><input type="checkbox" id="l-virtual" ${l?.virtual ? 'checked' : ''}><span></span>Auditoría virtual</label>
+        <small class="ayuda">Para locales que se auditan a distancia (otras provincias o países): permite subir fotos y videos desde la galería y no mide la distancia al local. En los demás locales solo se usa la cámara.</small></div>
       ${l ? `<label class="interruptor"><input type="checkbox" id="l-activo" ${l.active ? 'checked' : ''}><span></span>Local activo (si lo das de baja deja de aparecer para relevar)</label>` : ''}`,
     montar(hoja) {
       const seg = $('#l-tipo', hoja);
@@ -2065,7 +2112,8 @@ async function adminLocales() {
         codigo: valor(hoja, '#l-codigo'), nombre: valor(hoja, '#l-nombre'), region: valor(hoja, '#l-region'),
         tipo: $('#l-tipo .sel', hoja).dataset.v, pais: valor(hoja, '#l-pais'),
         lat: valor(hoja, '#l-lat'), lng: valor(hoja, '#l-lng'),
-        supervisores: hoja._orden, activo: $('#l-activo', hoja) ? $('#l-activo', hoja).checked : true
+        supervisores: hoja._orden, activo: $('#l-activo', hoja) ? $('#l-activo', hoja).checked : true,
+        virtual: $('#l-virtual', hoja).checked
       };
       await post(l ? `/api/admin/locales/${l.id}` : '/api/admin/locales', datos, l ? 'PUT' : 'POST');
       toast(l ? 'Local actualizado' : 'Local creado');
@@ -2606,7 +2654,7 @@ async function informePDF(d) {
   doc.setTextColor(180, 180, 185); doc.setFont('helvetica', 'normal'); doc.setFontSize(10);
   texto(`${r.code}  |  ${mesLabel(r.period)}`, W - M, 78, { align: 'right' });
   doc.setFontSize(9.5);
-  texto(`Relevado el ${fecha(r.client_created_at)} por ${r.usuario}`, M, 110);
+  texto(`Relevado el ${fecha(r.client_created_at)} por ${r.usuario}${r.virtual ? '  |  Auditoría virtual' : ''}`, M, 110);
   if (r.distance_m > DISTANCIA_MAX) {
     doc.setTextColor(241, 185, 90);
     texto(`Cargado a ${fmtDist(r.distance_m)} del local`, W - M, 110, { align: 'right' });
@@ -2832,8 +2880,8 @@ function vCuenta() {
           const actual = $('[name=actual]', hoja).value, nueva = $('[name=nueva]', hoja).value;
           if (!actual) throw new Error('Escribí tu clave actual');
           if (nueva.length < 8) throw new Error('La clave nueva tiene que tener al menos 8 caracteres');
-          await post('/api/cambiar-clave', { actual, nueva });
-          toast('Clave cambiada');
+          renovarSesion(await post('/api/cambiar-clave', { actual, nueva }));
+          toast('Clave cambiada. Si tenías la sesión abierta en otro celular, se cerró.');
         }
       });
       $('#salir').onclick = async () => {
