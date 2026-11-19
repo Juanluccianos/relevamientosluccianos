@@ -4,7 +4,32 @@
 
 // ↓↓↓ CAMBIAR por la URL de tu Worker (sin barra final)
 const API = 'https://relevamientos-api.lucciano-viaticos.workers.dev';
-const VERSION = '2.6.0';
+const VERSION = '2.6.1';
+
+/* ================================================================ mudanza de dominio
+   La app pasó de juanluccianos.github.io a relevamientos.luccianos.com.ar.
+   La versión vieja manda a cada uno a la dirección nueva, pero solo cuando no le quedan
+   relevamientos sin enviar ni borradores: esos viven guardados en el celular, separados
+   por dirección, y la app nueva no los vería. La sesión viaja en el # de la dirección
+   (esa parte nunca sale del celular), así nadie tiene que volver a poner la clave. */
+const DOMINIO_NUEVO = 'https://relevamientos.luccianos.com.ar';
+const EN_DOMINIO_VIEJO = location.hostname === 'juanluccianos.github.io';
+
+// Del lado nuevo: recibe la sesión, la guarda y limpia la dirección antes de que arranque la app
+(function recibirMudanza() {
+  const m = location.hash.match(/^#mudanza=(.+)$/);
+  if (!m) return;
+  try {
+    const d = JSON.parse(decodeURIComponent(m[1]));
+    // si este celular ya tenía una sesión abierta acá, se respeta la que había
+    if (d.t && !localStorage.getItem('rl_token')) {
+      localStorage.setItem('rl_token', d.t);
+      localStorage.setItem('rl_user', JSON.stringify(d.u || null));
+    }
+    window.__mudado = true;
+  } catch { /* dato roto: sigue como si nada y pide login */ }
+  history.replaceState(null, '', location.pathname + location.search + '#/');
+})();
 const PLAZO_DIAS = 7;          // mismo plazo que el Worker para corregir un incumplimiento
 const PLAZO_DIAS_CRITICO = 2;
 const DISTANCIA_MAX = 300; // metros: más lejos que esto, se marca como "cargado fuera del local"
@@ -575,6 +600,7 @@ function sincronizar() {
     avisarEnvio(null);
     actualizarBadge();
     if (location.hash.startsWith('#/pendientes')) render();
+    intentarMudanza();
   });
   return S.syncPromise;
 }
@@ -2909,4 +2935,52 @@ render();
 if (S.token && navigator.onLine) {
   cargarCatalogo().catch(() => {});
   sincronizar();
+}
+intentarMudanza();
+if (window.__mudado) setTimeout(() => toast('Listo: la app ahora está en relevamientos.luccianos.com.ar'), 600);
+
+/* ================================================================ mudanza: lado viejo */
+
+async function intentarMudanza() {
+  // sin señal no se muda: la dirección nueva tiene que cargar por primera vez
+  if (!EN_DOMINIO_VIEJO || !navigator.onLine || S.mudando) return;
+  let cola, borradores;
+  try {
+    [cola, borradores] = await Promise.all([idb.all('cola'), idb.all('borradores')]);
+  } catch { return; }
+  if (cola.length || borradores.length) return avisoMudanza(cola.length, borradores.length);
+  mudarse();
+}
+
+function mudarse() {
+  S.mudando = true;
+  const destino = S.token
+    ? '#mudanza=' + encodeURIComponent(JSON.stringify({ t: S.token, u: S.user }))
+    : '#/login';
+  location.replace(DOMINIO_NUEVO + '/' + destino);
+}
+
+// Cartel fijo arriba mientras queden cosas guardadas en este celular
+function avisoMudanza(enCola, enBorrador) {
+  let el = document.getElementById('aviso-mudanza');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'aviso-mudanza';
+    el.setAttribute('role', 'status');
+    el.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:9999;background:#f5c518;color:#111;' +
+      'padding:calc(env(safe-area-inset-top,0px) + 10px) 14px 10px;font:500 14px/1.35 system-ui,sans-serif;' +
+      'box-shadow:0 2px 8px rgba(0,0,0,.25)';
+    document.body.appendChild(el);
+  }
+  const partes = [];
+  if (enCola) partes.push(`${enCola} relevamiento${enCola === 1 ? '' : 's'} sin enviar`);
+  if (enBorrador) partes.push(`${enBorrador} borrador${enBorrador === 1 ? '' : 'es'} sin terminar`);
+  el.innerHTML = `La app se muda a una dirección nueva. Antes tenés que resolver lo que quedó en este celular: ` +
+    `<strong>${partes.join(' y ')}</strong>. ` +
+    (enCola ? 'Se envían solos cuando hay señal. ' : '') +
+    (enBorrador && !enCola ? `<button id="mudar-igual" style="margin-left:6px;padding:4px 10px;border:1px solid #111;border-radius:6px;background:#fff;color:#111;font:inherit">Mudarme igual</button>` : '');
+  const btn = document.getElementById('mudar-igual');
+  if (btn) btn.onclick = () => {
+    if (confirm('Los borradores sin terminar se van a perder. ¿Mudarte igual?')) mudarse();
+  };
 }
