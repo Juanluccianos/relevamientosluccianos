@@ -3,9 +3,9 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="theme-color" content="#0a0a0a">
+<meta name="theme-color" content="#f6f5f2">
 <meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="Relevamientos">
 <title>Relevamientos Lucciano's</title>
 <link rel="manifest" href="manifest.json">
@@ -13,7 +13,7 @@
 <link rel="apple-touch-icon" href="icon-192.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@600;700;800&family=Instrument+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
 /* ============ Relevamientos Lucciano's
    Monocromo como Viáticos (negro, blanco, grises). Manrope para títulos y números, Inter para texto.
@@ -694,6 +694,171 @@ details.item-fail:first-child summary { padding-top: 2px; }
 .visor-fondo img, .visor-fondo video { max-width: 100%; max-height: 88vh; border-radius: 10px; }
 .visor-x { position: absolute; top: calc(14px + env(safe-area-inset-top)); right: 14px; width: 42px; height: 42px; border-radius: 50%; border: 0; background: rgba(255,255,255,.15); color: #fff; display: grid; place-items: center; cursor: pointer; }
 .visor-x svg { width: 20px; height: 20px; }
+
+
+/* =============================================================================
+   v2.7 — Sistema de diseño v3, el mismo de Facturas, Costos, Efectivo y Asientos.
+   Va al final para pisar el estilo anterior sin mover nada de lugar: las pantallas,
+   los menús y los botones quedan donde la gente ya los conoce; cambia el aspecto.
+   Marca: tinta del logo + papel helado + acento pistacho. Color de esta app: durazno
+   (solo en el ícono y en la banda del login en el celular).
+   ============================================================================= */
+:root {
+  --ink: #15140f; --ink-2: #1c1b16; --soft: #6c6a62; --mute: #8a877e;
+  --paper: #f6f5f2; --paper-2: #f0efeb; --white: #ffffff; --line: #e5e3de; --line-strong: #d3d0c9;
+  --side: #eeede9; --side-hover: #e5e4df;
+  --accent: #4f7a28; --accent-ink: #456b22; --accent-soft: #ebf2e1; --accent-hover: #41651f;
+  --aprobado: #1f7a45; --critico: #b42318;
+  --durazno: #F2B38B;
+  --shadow: 0 1px 2px rgba(21,20,15,.05), 0 2px 8px rgba(21,20,15,.05);
+  --sh-2: 0 14px 34px rgba(21,20,15,.16), 0 2px 6px rgba(21,20,15,.08);
+  --r: 12px; --r-s: 8px; --top-h: 58px; --side-w: 248px;
+  --font-d: 'Manrope', 'Segoe UI', system-ui, sans-serif;
+  --font-b: 'Instrument Sans', 'Segoe UI', system-ui, -apple-system, sans-serif;
+}
+body { color: var(--ink-2); }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+h1, h2, h3 { color: var(--ink); letter-spacing: -.3px; }
+
+/* ---- barra de arriba: clara, como en las otras apps */
+.top { background: var(--paper); color: var(--ink-2); border-bottom: 1px solid var(--line); }
+.top h1 { font-size: 16px; font-weight: 700; color: var(--ink); }
+.top-btn { background: none; color: var(--soft); border-radius: var(--r-s); border: 1px solid transparent; }
+.top-btn:hover { background: var(--side-hover); color: var(--ink-2); border-color: var(--line); }
+.marca img { height: 30px; }
+.marca .logo-txt { color: var(--ink); }
+.badge { background: var(--accent); color: #fff; box-shadow: 0 0 0 2px var(--paper); }
+
+/* ---- menú del celular: barra flotante abajo, con las mismas secciones de siempre */
+.nav {
+  left: 12px; right: 12px; bottom: calc(12px + env(safe-area-inset-bottom));
+  height: auto; padding: 6px; gap: 2px;
+  border: 1px solid var(--line); border-radius: 16px;
+  background: rgba(255,255,255,.94); box-shadow: var(--sh-2);
+}
+.nav a { max-width: none; padding: 6px 2px; border-radius: 12px; font-size: 11px; color: var(--soft); gap: 2px; }
+.nav a svg { width: 20px; height: 20px; }
+.nav a.activo { color: var(--accent-ink); background: var(--accent-soft); }
+.nav a.activo::before { display: none; }
+.nav-badge { top: 2px; background: var(--critico); box-shadow: 0 0 0 2px var(--white); }
+.vista { padding-bottom: calc(112px + env(safe-area-inset-bottom)); }
+
+/* ---- piezas comunes */
+.card, .lista, .kpi, .fila-menu, .item { border-radius: var(--r); border-width: 1px; }
+.bloque > h2, .h-bloque { font-size: 17px; font-weight: 700; }
+.btn { border-radius: var(--r-s); border: 1px solid var(--line-strong); font-weight: 600; transition: background .12s, border-color .12s, transform .08s; }
+.btn:hover:not(:disabled) { background: var(--paper-2); border-color: var(--mute); }
+.btn.primario { background: var(--accent); border-color: var(--accent); color: #fff; }
+.btn.primario:hover:not(:disabled) { background: var(--accent-hover); border-color: var(--accent-hover); filter: none; }
+.btn.fantasma, .btn.fantasma:hover:not(:disabled) { background: transparent; border-color: transparent; }
+.btn.chico { border-radius: var(--r-s); }
+input[type=text], input[type=email], input[type=password], input[type=search], input[type=month], input[type=date], input:not([type]), select, textarea {
+  border: 1px solid var(--line-strong); border-radius: var(--r-s); background: var(--white);
+}
+input:focus, select:focus, textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.check input, .sel-fila input { accent-color: var(--accent); }
+.chip { border-width: 1px; }
+.chip.activo { background: var(--ink); border-color: var(--ink); }
+.tabs { border-radius: 10px; }
+.tabs button.activo { box-shadow: var(--shadow); }
+a.fila:hover, .fila-link:hover, .sel-fila:hover, .adm-fila:hover, .menu-fila:hover { background: var(--paper); }
+.barra span, .mini-barra span { background: var(--accent); }
+.vacio-ico { background: var(--accent-soft); color: var(--accent-ink); }
+.codigo-chip { background: var(--paper-2); color: var(--soft); font-weight: 700; }
+.ck-resumen div { background: var(--paper-2); color: var(--ink); }
+.ck-resumen span { color: var(--soft); }
+.cargando::before, .girando { border-color: var(--paper-2); border-top-color: var(--accent); }
+
+/* ---- la tarjeta de arriba (inicio, local, relevamiento) pasa de negra a clara */
+.hero, .perfil { background: var(--white); color: var(--ink-2); border: 1px solid var(--line); border-radius: 16px; box-shadow: var(--shadow); }
+.hero::after { display: none; }
+.hero-sub, .hero-meta, .hero-lbl, .perfil p { color: var(--soft); }
+.hero-titulo { color: var(--ink); }
+.hero-num small { color: var(--mute); }
+.hero-nota, .hero-notas { color: var(--ink-2); }
+.hero-notas { border-top-color: var(--line); }
+.hero-alerta { color: var(--observado); }
+.hero .anillo .pista { stroke: var(--paper-2); }
+.hero .anillo.aprobado .arco { stroke: var(--aprobado); }
+.hero .anillo.observado .arco { stroke: var(--observado); }
+.hero .anillo.urgente .arco { stroke: var(--urgente); }
+.hero .anillo.critico .arco { stroke: var(--critico); }
+.hero .anillo b { color: var(--ink); }
+.hero .anillo.sd b { color: var(--mute); }
+.hero .chip-escala { background: var(--paper-2); color: var(--soft); }
+.hero .chip-escala.aprobado { background: #e4f1e8; color: var(--aprobado); }
+.hero .chip-escala.observado { background: #fbf1df; color: var(--observado); }
+.hero .chip-escala.urgente { background: #fcebe1; color: var(--urgente); }
+.hero .chip-escala.critico { background: #fbe8e6; color: var(--critico); }
+.barra.clara { background: var(--paper-2); }
+.barra.clara span { background: var(--accent); }
+.chip-tarea { background: var(--paper-2); color: var(--soft); }
+.chip-tarea.vencida { background: #fbe8e6; color: var(--critico); }
+.chip-tarea.hoy { background: #fbf1df; color: var(--observado); }
+.chip-tarea.cerrada { background: #e4f1e8; color: var(--aprobado); }
+.chip-estrella { border-color: var(--line-strong); color: var(--soft); }
+.chip-estrella.on { border-color: var(--observado); color: var(--observado); }
+.perfil .avatar { background: var(--ink); color: var(--paper); }
+.perfil .rol-chip { background: var(--paper-2); color: var(--ink-2); }
+@media (max-width: 560px) { .hero-bloque + .hero-bloque { border-top-color: var(--line); } }
+
+.toast { background: var(--ink); color: var(--paper); border-radius: var(--r); border-left: 4px solid var(--accent); box-shadow: var(--sh-2); bottom: calc(96px + env(safe-area-inset-bottom)); }
+
+/* ---- pantalla de acceso (login y primer administrador) */
+.acceso { min-height: 100vh; min-height: 100dvh; display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); background: var(--paper); }
+.acceso-arte { background: var(--ink); color: var(--paper); padding: 48px; display: flex; flex-direction: column; justify-content: space-between; gap: 32px; }
+.acceso-logo img { width: 220px; height: auto; display: block; }
+.acceso-logo .logo-txt { font-size: 36px; color: var(--paper); }
+.acceso-sub { display: none; }
+.acceso-txt h2 { margin: 0; font: 800 40px/1.08 var(--font-d); letter-spacing: -1.2px; max-width: 16ch; color: var(--paper); }
+.acceso-txt p { margin: 14px 0 0; color: rgba(246,245,242,.68); max-width: 44ch; }
+.pasos { display: flex; flex-wrap: wrap; gap: 8px; }
+.pasos span { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; padding: 6px 12px; border: 1px solid rgba(246,245,242,.22); border-radius: 999px; }
+.pasos svg { width: 14px; height: 14px; color: #8fc25a; }
+.acceso-form { display: grid; place-items: center; padding: 32px 16px; }
+.acceso-form .caja { width: 100%; max-width: 360px; display: flex; flex-direction: column; }
+.acceso-form h1 { margin: 0; font: 800 26px/1.15 var(--font-d); letter-spacing: -.6px; }
+.acceso-form .intro { margin: 4px 0 20px; color: var(--soft); }
+.acceso-form .btn.primario { margin-top: 4px; }
+.acceso-link { margin-top: 18px; align-self: center; font-size: 14px; color: var(--accent-ink); text-underline-offset: 2px; }
+@media (max-width: 720px) {
+  .acceso { display: flex; flex-direction: column; }
+  .acceso-arte { background: var(--durazno); color: #14180f; align-items: center; justify-content: center; text-align: center; gap: 10px;
+    padding: calc(env(safe-area-inset-top) + 44px) 24px 40px; border-radius: 0 0 32px 32px; }
+  .acceso-logo img { width: 190px; content: url(logo-negro.png); }
+  .acceso-logo .logo-txt { color: #14180f; }
+  .acceso-sub { display: block; margin: 0; font: 700 14px var(--font-d); letter-spacing: .4px; text-transform: uppercase; color: #4a2a14; }
+  .acceso-txt, .acceso-arte .pasos { display: none; }
+  .acceso-form { flex: 1; place-items: start center; padding: 32px 22px calc(env(safe-area-inset-bottom) + 28px); }
+  .acceso-form .caja { max-width: 420px; }
+  .acceso-form h1 { font-size: 28px; }
+  .acceso-form input { border-radius: 14px; }
+  .acceso-form .btn.primario { width: 100%; border-radius: 14px; min-height: 52px; font-size: 16px; }
+}
+
+/* ---- en la compu: el mismo menú pasa a la izquierda, con el logo arriba (como en las otras apps) */
+@media (min-width: 861px) {
+  #app:has(> .nav) { padding-left: var(--side-w); }
+  .nav {
+    top: 0; bottom: 0; left: 0; right: auto; width: var(--side-w);
+    flex-direction: column; justify-content: flex-start; gap: 2px;
+    padding: 118px 14px 16px; border: 0; border-right: 1px solid var(--line); border-radius: 0;
+    background: var(--side); box-shadow: none; backdrop-filter: none; -webkit-backdrop-filter: none;
+  }
+  .nav::before { content: ""; position: absolute; top: 22px; left: 50%; transform: translateX(-50%); width: 132px; height: 57px; background: url(logo-negro.png) center / contain no-repeat; }
+  .nav::after { content: "Relevamientos"; position: absolute; top: 84px; left: 0; right: 0; text-align: center; font-size: 11px; font-weight: 700; letter-spacing: .9px; text-transform: uppercase; color: var(--soft); }
+  .nav a { flex: none; flex-direction: row; justify-content: flex-start; gap: 11px; padding: 9px 10px; border-radius: var(--r-s); font-size: 14px; font-weight: 500; color: var(--soft); transition: background .15s, color .15s; }
+  .nav a svg { width: 18px; height: 18px; }
+  .nav a:hover { background: var(--side-hover); color: var(--ink-2); }
+  .nav a.activo { background: var(--white); color: var(--ink-2); font-weight: 600; box-shadow: var(--shadow); }
+  .nav a.activo svg { color: var(--accent); }
+  .nav-badge { position: static; margin-left: auto; box-shadow: none; }
+  .top { padding-left: 24px; padding-right: 24px; grid-template-columns: 110px 1fr 110px; }
+  .top .marca { visibility: hidden; }
+  .vista { max-width: 980px; padding: 28px 32px 64px; }
+  .rel-head { margin: -28px -32px 0; padding: 12px 32px; }
+  .toast { bottom: 24px; }
+}
 
 @media (prefers-reduced-motion: reduce) { *, *::before { transition: none !important; animation: none !important; } }
 </style>

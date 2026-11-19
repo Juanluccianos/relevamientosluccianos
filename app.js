@@ -4,7 +4,7 @@
 
 // ↓↓↓ CAMBIAR por la URL de tu Worker (sin barra final)
 const API = 'https://relevamientos-api.lucciano-viaticos.workers.dev';
-const VERSION = '2.6.1';
+const VERSION = '2.7.0';
 
 /* ================================================================ mudanza de dominio
    La app pasó de juanluccianos.github.io a relevamientos.luccianos.com.ar.
@@ -75,6 +75,46 @@ function distancia(lat1, lng1, lat2, lng2) {
   return 2 * R * Math.asin(Math.sqrt(a));
 }
 /* ---- logo: negro sobre fondo claro, blanco sobre la barra oscura; si no carga, muestra el nombre en texto */
+// Color de la barra de estado del celular (la del reloj y la batería)
+const COLOR_APP = '#F2B38B';   // durazno: el color de Relevamientos (ícono y banda del login)
+function colorBarra(c) {
+  document.querySelectorAll('meta[name="theme-color"]').forEach(m => {
+    if (!m.dataset.orig) m.dataset.orig = m.content;
+    m.content = c || m.dataset.orig;
+  });
+}
+
+// Pantalla de acceso (login y primer administrador): mismo diseño que Facturas, Costos y Asientos.
+// En la compu: panel oscuro a la izquierda y el formulario a la derecha.
+// En el celular: banda durazno arriba con el logo y el formulario abajo.
+function pantallaAcceso({ titulo, intro, form, link }) {
+  return `
+    <div class="acceso">
+      <div class="acceso-arte">
+        ${logo('acceso-logo', 'blanco')}
+        <p class="acceso-sub">Relevamientos de locales</p>
+        <div class="acceso-txt">
+          <h2>Relevamiento mensual de locales.</h2>
+          <p>El supervisor completa el checklist desde el celular, aunque no haya señal. Los jefes ven el resumen del mes, el ranking y las tareas abiertas.</p>
+        </div>
+        <div class="pasos">
+          <span>${ICON.locales}Elegís el local</span>
+          <span>${ICON.check}Completás el checklist</span>
+          <span>${ICON.camara}Sacás las fotos</span>
+          <span>${ICON.sync}Se envía solo</span>
+        </div>
+      </div>
+      <div class="acceso-form">
+        <div class="caja">
+          <h1>${titulo}</h1>
+          <p class="intro">${intro}</p>
+          ${form}
+          ${link}
+        </div>
+      </div>
+    </div>`;
+}
+
 function logo(clase, variante = 'negro') {
   return `<span class="logo-wrap ${clase}"><img src="logo-${variante}.png" alt="Lucciano's" onerror="this.hidden=true;this.nextElementSibling.hidden=false"><span class="logo-txt" hidden>Lucciano's</span></span>`;
 }
@@ -744,13 +784,14 @@ function pintar(v) {
       <header class="top">
         ${v.atras
           ? `<a class="top-btn" href="${v.atras}" aria-label="Volver">${ICON.atras}</a>`
-          : logo('marca', 'blanco')}
+          : logo('marca', 'negro')}
         <h1>${esc(v.titulo)}</h1>
         <a class="top-btn" href="#/pendientes" aria-label="Relevamientos pendientes de enviar">${ICON.sync}<span class="badge" id="sync-badge" hidden></span></a>
       </header>
       <main class="vista">${v.html}</main>
       ${nav()}`;
   }
+  if (!v.sinNav) colorBarra(null);
   window.scrollTo(0, 0);
   v.montar?.(app);
   actualizarBadge();
@@ -810,18 +851,20 @@ function vLogin() {
   if (S.token) { location.hash = '#/'; return null; }
   return {
     sinNav: true,
-    html: `
-      <div class="login-fondo"><div class="login">
-        <div class="login-marca">${logo('logo-grande', 'blanco')}<p>Relevamientos de locales</p></div>
-        <form id="f-login" class="card form" novalidate>
+    html: pantallaAcceso({
+      titulo: 'Ingresar',
+      intro: "Usá tu mail de Lucciano's.",
+      form: `
+        <form id="f-login" class="form" novalidate>
           <label>Email<input name="email" type="email" inputmode="email" autocomplete="username" required data-email></label>
           ${campoClave('Clave', 'clave', 'autocomplete="current-password" required')}
           <p class="error" id="err" hidden></p>
           <button class="btn primario" type="submit">Ingresar</button>
-        </form>
-        <a class="link-sutil" href="#/instalar">¿Primera vez? Configurar la app</a>
-      </div></div>`,
+        </form>`,
+      link: '<a class="acceso-link" href="#/instalar">¿Primera vez? Configurar la app</a>'
+    }),
     montar() {
+      colorBarra(COLOR_APP);
       $('#f-login').onsubmit = async e => {
         e.preventDefault();
         const malo = validar(e.target);
@@ -845,20 +888,22 @@ function vLogin() {
 function vInstalar() {
   return {
     sinNav: true,
-    html: `
-      <div class="login-fondo"><div class="login">
-        <div class="login-marca">${logo('logo-grande', 'blanco')}<p>Crear el primer administrador</p></div>
-        <form id="f-setup" class="card form" novalidate>
+    html: pantallaAcceso({
+      titulo: 'Configurar la app',
+      intro: 'Creá el primer administrador. Esto se hace una sola vez.',
+      form: `
+        <form id="f-setup" class="form" novalidate>
           ${campoClave('Clave de instalación', 'ci', 'autocomplete="off" required')}
           <label>Tu nombre<input name="nombre" autocomplete="name" required></label>
           <label>Email<input name="email" type="email" inputmode="email" autocomplete="username" required data-email></label>
           ${campoClave('Clave (mínimo 8 caracteres)', 'clave', 'autocomplete="new-password" minlength="8" required')}
           <p class="error" id="err" hidden></p>
           <button class="btn primario" type="submit">Crear administrador</button>
-        </form>
-        <a class="link-sutil" href="#/login">Ya tengo usuario</a>
-      </div></div>`,
+        </form>`,
+      link: '<a class="acceso-link" href="#/login">Ya tengo usuario</a>'
+    }),
     montar() {
+      colorBarra(COLOR_APP);
       $('#f-setup').onsubmit = async e => {
         e.preventDefault();
         const malo = validar(e.target);
