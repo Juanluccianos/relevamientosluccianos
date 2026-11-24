@@ -10,6 +10,8 @@ const ACCESO_API = 'https://acceso-api.lucciano-viaticos.workers.dev';
 const ACCESO_APP = 'relevamientos';
 // Transición: mientras sea true se puede seguir entrando con la clave vieja. Al terminar, pasarlo a false.
 const LOGIN_VIEJO = true;
+// Operativos con una sola app (supervisores, escaneo): sin botón para volver a Herramientas
+try { if (localStorage.getItem('herr_portal') === '0') document.head.insertAdjacentHTML('beforeend', '<style>[aria-label="Volver al portal"]{display:none!important}</style>'); } catch (e) { /* sin storage */ }
 const VERSION = '2.8.0';
 
 /* ================================================================ mudanza de dominio
@@ -2932,7 +2934,7 @@ function vCuenta() {
           <span class="menu-ico">${ICON.sync}</span>
           <span class="fila-txt"><strong>Actualizar datos</strong><small>${S.cat ? `${S.cat.stores.length} locales y ${S.cat.items.length} ítems, al ${fecha(S.cat.at)}` : 'Todavía no se descargaron'}</small></span>
         </button>
-        <a class="menu-fila" href="${PORTAL}">
+        <a class="menu-fila" href="${PORTAL}" aria-label="Volver al portal">
           <span class="menu-ico">${ICON.llave}</span>
           <span class="fila-txt"><strong>Mi cuenta y otras herramientas</strong><small>Clave y apps, en el portal de Herramientas</small></span>
           <span class="flecha">${ICON.derecha}</span></a>
@@ -3015,6 +3017,7 @@ async function accesoDesdePortal() {
     S.user = d.user;
     localStorage.setItem('rl_token', r.token);
     localStorage.setItem('rl_user', JSON.stringify(d.user));
+    localStorage.setItem('herr_portal', r.ve_portal === false ? '0' : '1');
   } catch (e) {
     setTimeout(() => toast(/fetch/i.test(e.message) ? 'No se pudo conectar para ingresar. Volvé a entrar desde el portal.' : e.message), 400);
   }
