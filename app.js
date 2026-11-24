@@ -3107,8 +3107,11 @@ if ('serviceWorker' in navigator) {
 
 // Llegada desde el portal: si ya tiene sesión entra al instante; si no, el portal le consigue una y lo devuelve
 async function accesoDesdePortal() {
-  if (location.hash === '#portal') {
-    history.replaceState(null, '', location.pathname + location.search + '#/');
+  // #portal o #portal=<ruta>: llega desde Herramientas (con la ruta a abrir, si vino del buscador o de un pendiente)
+  const mPortal = location.hash.match(/^#portal(?:=(.+))?$/);
+  if (mPortal) {
+    const destino = mPortal[1] ? decodeURIComponent(mPortal[1]) : '#/';
+    history.replaceState(null, '', location.pathname + location.search + destino);
     if (!S.token) { location.replace(PORTAL + '/#ir=' + ACCESO_APP); return 'redirigiendo'; }
     return;
   }
