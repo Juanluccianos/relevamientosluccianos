@@ -858,6 +858,28 @@ a.fila:hover, .fila-link:hover, .sel-fila:hover, .adm-fila:hover, .menu-fila:hov
   .vista { max-width: 980px; padding: 28px 32px 64px; }
   .rel-head { margin: -28px -32px 0; padding: 12px 32px; }
   .toast { bottom: 24px; }
+  /* marco común: grupos, tu usuario abajo y título a la izquierda (igual que Facturas, Payway, Costos…) */
+  .nav { overflow-y: auto; }
+  .nav .grp-t { display: block; font-size: 11px; font-weight: 700; letter-spacing: .9px; text-transform: uppercase; color: var(--soft); padding: 14px 10px 6px; }
+  .nav .grp-t:first-child { padding-top: 4px; }
+  .nav .solo-cel { display: none; }
+  .nav .solo-pc { display: flex; }
+  .nav .me { display: flex; margin-top: auto; align-items: center; gap: 10px; padding: 12px 8px 2px; border-top: 1px solid var(--line); }
+  .nav .me a { padding: 0; background: none; box-shadow: none; }
+  .nav .me .av { flex: none; width: 34px; height: 34px; border-radius: 50%; background: var(--ink); color: var(--white); display: grid; place-items: center; font: 700 13px var(--font-d); text-decoration: none; }
+  .nav .me .who { flex: 1; min-width: 0; display: block; text-decoration: none; line-height: 1.25; }
+  .nav .me .who b { display: block; font-size: 13.5px; font-weight: 600; color: var(--ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .nav .me .who small { font-size: 12px; color: var(--soft); }
+  .nav .me .ibtn { flex: none; width: 34px; height: 34px; border-radius: 8px; display: grid; place-items: center; color: var(--soft); }
+  .nav .me .ibtn:hover { background: var(--side-hover); color: var(--ink-2); }
+  .nav .me .ibtn svg { width: 18px; height: 18px; }
+  .top { grid-template-columns: auto 1fr auto; }
+  .top .marca { display: none; }
+  .top h1 { text-align: left; font-size: 15px; }
+}
+/* en el celular el menú es la barra de abajo: sin títulos de grupo ni tarjeta de usuario */
+@media (max-width: 860px) {
+  .nav .grp-t, .nav .me, .nav .solo-pc { display: none; }
 }
 
 @media (prefers-reduced-motion: reduce) { *, *::before { transition: none !important; animation: none !important; } }

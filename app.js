@@ -12,7 +12,7 @@ const ACCESO_APP = 'relevamientos';
 const LOGIN_VIEJO = true;
 // Operativos con una sola app (supervisores, escaneo): sin botón para volver a Herramientas
 try { if (localStorage.getItem('herr_portal') === '0') document.head.insertAdjacentHTML('beforeend', '<style>[aria-label="Volver al portal"]{display:none!important}</style>'); } catch (e) { /* sin storage */ }
-const VERSION = '2.9.0';
+const VERSION = '3.0.0';
 
 /* ================================================================ mudanza de dominio
    La app pasó de juanluccianos.github.io a relevamientos.luccianos.com.ar.
@@ -776,16 +776,39 @@ function toast(msg) {
 
 function nav() {
   const h = location.hash || '#/';
-  const links = [
-    ['#/', 'Inicio', ICON.inicio, h === '#/' || h === '#'],
-    ...(esJefe() ? [['#/informes', 'Informes', ICON.bandeja, h.startsWith('#/informes'), 'informes']] : []),
-    ['#/locales', 'Locales', ICON.locales, h.startsWith('#/locales') || h.startsWith('#/local/')],
-    ['#/tareas', 'Tareas', ICON.tareas, h.startsWith('#/tarea'), 'tareas'],
-    ['#/resumen', 'Resumen', ICON.resumen, h.startsWith('#/resumen')],
-    ['#/cuenta', 'Cuenta', ICON.cuenta, h.startsWith('#/cuenta') || h.startsWith('#/admin')]
+  const L = (href, txt, ico, act, extra = '', cls = '') => [href, txt, ico, act, extra, cls];
+  const inicio = h === '#/' || h === '#';
+  const grupos = esJefe() ? [
+    ['Trabajo', [
+      L('#/', 'Informes', ICON.bandeja, inicio || h.startsWith('#/informes') || h.startsWith('#/rel/'), 'informes'),
+      L('#/tareas', 'Tareas', ICON.tareas, h.startsWith('#/tarea'), 'tareas')]],
+    ['Análisis', [L('#/resumen', 'Resumen', ICON.resumen, h.startsWith('#/resumen'))]],
+    ['Datos', [
+      L('#/locales', 'Locales', ICON.locales, h.startsWith('#/locales') || h.startsWith('#/local/')),
+      L('#/admin', 'Administración', ICON.admin, h.startsWith('#/admin'), '', 'solo-pc')]]
+  ] : [
+    ['Trabajo', [
+      L('#/', 'Inicio', ICON.inicio, inicio),
+      L('#/tareas', 'Tareas', ICON.tareas, h.startsWith('#/tarea'), 'tareas')]],
+    ['Datos', [
+      L('#/locales', 'Locales', ICON.locales, h.startsWith('#/locales') || h.startsWith('#/local/')),
+      L('#/resumen', 'Resumen', ICON.resumen, h.startsWith('#/resumen'))]]
   ];
-  return `<nav class="nav">${links.map(([href, txt, ico, act, extra]) =>
-    `<a href="${href}" class="${act ? 'activo' : ''}" ${act ? 'aria-current="page"' : ''}>${ico}<span>${txt}</span>${extra === 'tareas' ? '<i class="nav-badge" id="badge-tareas" hidden></i>' : extra === 'informes' ? '<i class="nav-badge" id="badge-informes" style="background:var(--accent)" hidden></i>' : ''}</a>`).join('')}</nav>`;
+  const badge = extra => extra === 'tareas' ? '<i class="nav-badge" id="badge-tareas" hidden></i>'
+    : extra === 'informes' ? '<i class="nav-badge" id="badge-informes" style="background:var(--accent)" hidden></i>' : '';
+  const link = ([href, txt, ico, act, extra, cls]) =>
+    `<a href="${href}" class="${act ? 'activo' : ''} ${cls}" ${act ? 'aria-current="page"' : ''}>${ico}<span>${txt}</span>${badge(extra)}</a>`;
+  const u = S.user || {};
+  const cuenta = h.startsWith('#/cuenta');
+  return `<nav class="nav">
+    ${grupos.map(([t, ls]) => `<div class="grp-t">${t}</div>${ls.map(link).join('')}`).join('')}
+    <a href="#/cuenta" class="${cuenta ? 'activo' : ''} solo-cel" ${cuenta ? 'aria-current="page"' : ''}>${ICON.cuenta}<span>Cuenta</span></a>
+    <div class="me">
+      <a class="av" href="#/cuenta" title="Mi cuenta">${esc(iniciales(u.name))}</a>
+      <a class="who" href="#/cuenta"><b>${esc(u.name || '')}</b><small>${esc(ROL[u.role] || '')}</small></a>
+      <a class="ibtn" href="${PORTAL}" title="Volver al portal" aria-label="Volver al portal"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg></a>
+    </div>
+  </nav>`;
 }
 
 function pintar(v) {
