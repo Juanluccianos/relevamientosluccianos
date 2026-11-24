@@ -258,6 +258,22 @@ const chipEscala = e => `<span class="chip-escala ${e}">${ESCALAS[e]}</span>`;
 
 /* ================================================================ estado */
 
+/* Entrada desde Herramientas: si en este navegador quedó la sesión de OTRA persona (o una sesión vieja,
+   anterior al login único), se descarta y el portal consigue la de quien está usando la compu. */
+(function controlarCuenta() {
+  const m = location.hash.match(/^#portal(?:!(\d+))?(?:=.*)?$/);
+  if (!m) return;
+  try {
+    const uid = m[1], claves = ['rl_token', 'rl_user'];
+    const tok = localStorage.getItem(claves[0]) || '';
+    const token = (() => { try { const j = JSON.parse(tok); return (j && j.token) || j || ''; } catch { return tok; } })();
+    const central = /^[A-Za-z0-9_-]{43}$/.test(String(token));
+    const dueno = localStorage.getItem('herr_uid');
+    if (token && (!central || (uid && dueno !== uid))) { claves.forEach(k => localStorage.removeItem(k)); localStorage.removeItem('herr_uid'); }
+    if (uid) history.replaceState(null, '', location.pathname + location.search + location.hash.replace('!' + uid, ''));
+  } catch (e) { /* sin storage */ }
+})();
+
 const S = {
   token: localStorage.getItem('rl_token'),
   user: JSON.parse(localStorage.getItem('rl_user') || 'null'),
@@ -1741,7 +1757,12 @@ function estilosInformes() {
     .inf-sup { margin-left: auto; height: 36px; padding: 0 10px; border: 0; border-radius: 10px; background: var(--white); box-shadow: inset 0 0 0 1px var(--line); font: 500 13.5px var(--font-b); }
     .inf-lista { display: flex; flex-direction: column; gap: 10px; }
     .inf-card { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; padding: 14px 16px; border-radius: var(--r); background: var(--white); box-shadow: var(--shadow); text-decoration: none; color: inherit; }
-    .inf-card.visto { background: var(--paper-2); box-shadow: inset 0 0 0 1px var(--line); }
+    .inf-card.visto { background: var(--white); box-shadow: inset 0 0 0 1px var(--line); }
+    .inf-card.visto .inf-txt b { color: var(--soft); }
+    @media (min-width: 641px) {
+      .inf-card { display: grid; grid-template-columns: 9px auto minmax(200px, 1fr) minmax(0, auto) auto; }
+      .inf-tags { justify-content: flex-end; }
+    }
     .inf-punto { width: 9px; height: 9px; border-radius: 50%; background: var(--accent); flex: none; }
     .inf-card.visto .inf-punto { background: transparent; }
     .inf-txt { flex: 1; min-width: 180px; }
@@ -3055,6 +3076,10 @@ function vCuenta() {
           <span class="menu-ico">${ICON.llave}</span>
           <span class="fila-txt"><strong>Cambiar clave</strong><small>La de antes (mientras dure el cambio al portal)</small></span>
           <span class="flecha">${ICON.derecha}</span>
+        </button>
+        <button class="menu-fila salir" id="salir-viejo">
+          <span class="menu-ico">${ICON.salir}</span>
+          <span class="fila-txt"><strong>Cerrar esta sesión</strong><small>Es una sesión de antes del portal. Después entrá desde Herramientas.</small></span>
         </button>`}
       </div>
       <p class="version">Relevamientos Lucciano's · versión ${VERSION}</p>`,
@@ -3065,6 +3090,8 @@ function vCuenta() {
         try { await cargarCatalogo(); toast('Datos actualizados'); render(); }
         catch (err) { toast(err.message); b.disabled = false; }
       };
+      const bSalirV = $('#salir-viejo');
+      if (bSalirV) bSalirV.onclick = () => { salir(); location.href = PORTAL + '/#ir=' + ACCESO_APP; };
       const bClave = $('#clave');
       if (bClave) bClave.onclick = () => abrirHoja({
         titulo: 'Cambiar clave',
@@ -3134,6 +3161,7 @@ async function accesoDesdePortal() {
     localStorage.setItem('rl_token', r.token);
     localStorage.setItem('rl_user', JSON.stringify(d.user));
     localStorage.setItem('herr_portal', r.ve_portal === false ? '0' : '1');
+    localStorage.setItem('herr_uid', String(r.usuario?.id || ''));
   } catch (e) {
     setTimeout(() => toast(/fetch/i.test(e.message) ? 'No se pudo conectar para ingresar. Volvé a entrar desde el portal.' : e.message), 400);
   }
@@ -3185,3 +3213,34 @@ function avisoMudanza(enCola, enBorrador) {
     if (confirm('Los borradores sin terminar se van a perder. ¿Mudarte igual?')) mudarse();
   };
 }
+
+/* Marco común de Herramientas: botón negro "‹ Herramientas" arriba de la barra lateral y la ruta
+   "Herramientas / Relevamientos / …" en la barra de arriba. No aparece para quien usa una sola app (operativos). */
+(function marcoHerramientas() {
+  try { if (localStorage.getItem('herr_portal') === '0') return; } catch (e) { /* sin storage */ }
+  document.head.insertAdjacentHTML('beforeend', `<style id="herr-marco">
+    .herr-volver { display: flex !important; align-items: center; gap: 9px; margin: 0 0 14px; padding: 10px 12px !important; border-radius: 12px !important; background: #15140f !important; color: #fff !important; text-decoration: none !important; font: 600 14px/1.1 'Instrument Sans', system-ui, sans-serif !important; box-shadow: none !important; }
+    .herr-volver:hover { background: #2c2a22 !important; }
+    .herr-volver svg { width: 16px !important; height: 16px !important; flex: none; color: #fff !important; }
+    .herr-volver b { flex: 1; font-weight: 600; }
+    .herr-ruta { display: inline-flex; align-items: center; gap: 8px; font-weight: 500; }
+    .herr-ruta a { color: inherit; opacity: .6; text-decoration: none; }
+    .herr-ruta a:hover { opacity: 1; text-decoration: underline; }
+    .herr-ruta i { font-style: normal; opacity: .45; }
+    @media (max-width: 860px) { .herr-volver, .herr-ruta { display: none !important; } }
+  </style>`);
+  const FLECHA = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>';
+  const GRILLA = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>';
+  const poner = () => {
+    document.querySelectorAll('nav.nav').forEach(s => {
+      if (s.querySelector('.herr-volver')) return;
+      const br = s.querySelector(':scope > .brand, :scope > .v-brand');
+      (br || s).insertAdjacentHTML(br ? 'afterend' : 'afterbegin', `<a class="herr-volver" href="https://herramientas.luccianos.com.ar" title="Volver a Herramientas">${FLECHA}<b>Herramientas</b>${GRILLA}</a>`);
+    });
+    document.querySelectorAll('.top h1').forEach(c => {
+      if (!c.querySelector('.herr-ruta')) c.insertAdjacentHTML('afterbegin', `<span class="herr-ruta"><a href="https://herramientas.luccianos.com.ar">Herramientas</a><i>/</i><span>Relevamientos</span><i>/</i></span> `);
+    });
+  };
+  new MutationObserver(poner).observe(document.documentElement, { childList: true, subtree: true });
+  poner();
+})();
