@@ -4,7 +4,13 @@
 
 // ↓↓↓ CAMBIAR por la URL de tu Worker (sin barra final)
 const API = 'https://relevamientos-api.lucciano-viaticos.workers.dev';
-const VERSION = '2.7.0';
+// Login único: la sesión viene del portal de Herramientas (Worker acceso-api)
+const PORTAL = 'https://herramientas.luccianos.com.ar';
+const ACCESO_API = 'https://acceso-api.lucciano-viaticos.workers.dev';
+const ACCESO_APP = 'relevamientos';
+// Transición: mientras sea true se puede seguir entrando con la clave vieja. Al terminar, pasarlo a false.
+const LOGIN_VIEJO = true;
+const VERSION = '2.8.0';
 
 /* ================================================================ mudanza de dominio
    La app pasó de juanluccianos.github.io a relevamientos.luccianos.com.ar.
@@ -853,14 +859,16 @@ function vLogin() {
     sinNav: true,
     html: pantallaAcceso({
       titulo: 'Ingresar',
-      intro: "Usá tu mail de Lucciano's.",
+      intro: "Entrá desde el portal de Herramientas, con tu usuario de Lucciano's.",
       form: `
+        <a class="btn primario" href="${PORTAL}/#ir=${ACCESO_APP}" style="display:flex;justify-content:center;text-decoration:none">Ir al portal</a>
+        <details ${LOGIN_VIEJO ? '' : 'hidden'} style="margin-top:18px"><summary style="cursor:pointer;font-size:14px;opacity:.75">Ingresar con la clave anterior</summary><div style="margin-top:12px">
         <form id="f-login" class="form" novalidate>
           <label>Email<input name="email" type="email" inputmode="email" autocomplete="username" required data-email></label>
           ${campoClave('Clave', 'clave', 'autocomplete="current-password" required')}
           <p class="error" id="err" hidden></p>
           <button class="btn primario" type="submit">Ingresar</button>
-        </form>`,
+        </form></div></details>`,
       link: '<a class="acceso-link" href="#/instalar">¿Primera vez? Configurar la app</a>'
     }),
     montar() {
@@ -2924,15 +2932,15 @@ function vCuenta() {
           <span class="menu-ico">${ICON.sync}</span>
           <span class="fila-txt"><strong>Actualizar datos</strong><small>${S.cat ? `${S.cat.stores.length} locales y ${S.cat.items.length} ítems, al ${fecha(S.cat.at)}` : 'Todavía no se descargaron'}</small></span>
         </button>
-        <button class="menu-fila" id="clave">
+        <a class="menu-fila" href="${PORTAL}">
           <span class="menu-ico">${ICON.llave}</span>
-          <span class="fila-txt"><strong>Cambiar clave</strong><small>Para entrar a la app</small></span>
+          <span class="fila-txt"><strong>Mi cuenta y otras herramientas</strong><small>Clave y apps, en el portal de Herramientas</small></span>
+          <span class="flecha">${ICON.derecha}</span></a>
+        ${u.central ? '' : `<button class="menu-fila" id="clave">
+          <span class="menu-ico">${ICON.llave}</span>
+          <span class="fila-txt"><strong>Cambiar clave</strong><small>La de antes (mientras dure el cambio al portal)</small></span>
           <span class="flecha">${ICON.derecha}</span>
-        </button>
-        <button class="menu-fila salir" id="salir">
-          <span class="menu-ico">${ICON.salir}</span>
-          <span class="fila-txt"><strong>Cerrar sesión</strong></span>
-        </button>
+        </button>`}
       </div>
       <p class="version">Relevamientos Lucciano's · versión ${VERSION}</p>`,
     montar() {
@@ -2942,7 +2950,8 @@ function vCuenta() {
         try { await cargarCatalogo(); toast('Datos actualizados'); render(); }
         catch (err) { toast(err.message); b.disabled = false; }
       };
-      $('#clave').onclick = () => abrirHoja({
+      const bClave = $('#clave');
+      if (bClave) bClave.onclick = () => abrirHoja({
         titulo: 'Cambiar clave',
         html: `${campoClave('Clave actual', 'actual', 'autocomplete="current-password"')}
                ${campoClave('Clave nueva (mínimo 8 caracteres)', 'nueva', 'autocomplete="new-password"')}`,
@@ -2955,11 +2964,6 @@ function vCuenta() {
           toast('Clave cambiada. Si tenías la sesión abierta en otro celular, se cerró.');
         }
       });
-      $('#salir').onclick = async () => {
-        const n = (await idb.all('cola')).length;
-        if (n && !confirm(`Tenés ${n} relevamiento(s) sin enviar. Si cerrás sesión no se van a poder enviar hasta que vuelvas a ingresar. ¿Salir igual?`)) return;
-        salir();
-      };
     }
   };
 }
@@ -2976,12 +2980,45 @@ if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('sw.js').catch(() => {});
 }
 
-render();
-if (S.token && navigator.onLine) {
-  cargarCatalogo().catch(() => {});
-  sincronizar();
+(async () => {
+  if (await accesoDesdePortal() === 'redirigiendo') return;
+  render();
+  if (S.token && navigator.onLine) {
+    cargarCatalogo().catch(() => {});
+    sincronizar();
+  }
+  intentarMudanza();
+})();
+
+// Llegada desde el portal: si ya tiene sesión entra al instante; si no, el portal le consigue una y lo devuelve
+async function accesoDesdePortal() {
+  if (location.hash === '#portal') {
+    history.replaceState(null, '', location.pathname + location.search + '#/');
+    if (!S.token) { location.replace(PORTAL + '/#ir=' + ACCESO_APP); return 'redirigiendo'; }
+    return;
+  }
+  const m = location.hash.match(/^#acceso=([\w-]+)$/);
+  if (!m) return;
+  history.replaceState(null, '', location.pathname + location.search + '#/');
+  try {
+    const res = await fetch(ACCESO_API + '/canjear', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ codigo: m[1], app: ACCESO_APP })
+    });
+    const r = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(r.error || 'No se pudo ingresar.');
+    // Los datos de la persona en esta app (su número de siempre, rol y locales)
+    const res2 = await fetch(API + '/api/me', { headers: { Authorization: 'Bearer ' + r.token } });
+    const d = await res2.json().catch(() => ({}));
+    if (!res2.ok || !d.user) throw new Error(d.error || 'No se pudo ingresar.');
+    S.token = r.token;
+    S.user = d.user;
+    localStorage.setItem('rl_token', r.token);
+    localStorage.setItem('rl_user', JSON.stringify(d.user));
+  } catch (e) {
+    setTimeout(() => toast(/fetch/i.test(e.message) ? 'No se pudo conectar para ingresar. Volvé a entrar desde el portal.' : e.message), 400);
+  }
 }
-intentarMudanza();
 if (window.__mudado) setTimeout(() => toast('Listo: la app ahora está en relevamientos.luccianos.com.ar'), 600);
 
 /* ================================================================ mudanza: lado viejo */
