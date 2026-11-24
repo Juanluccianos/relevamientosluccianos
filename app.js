@@ -12,7 +12,7 @@ const ACCESO_APP = 'relevamientos';
 const LOGIN_VIEJO = true;
 // Operativos con una sola app (supervisores, escaneo): sin botón para volver a Herramientas
 try { if (localStorage.getItem('herr_portal') === '0') document.head.insertAdjacentHTML('beforeend', '<style>[aria-label="Volver al portal"]{display:none!important}</style>'); } catch (e) { /* sin storage */ }
-const VERSION = '2.8.0';
+const VERSION = '2.9.0';
 
 /* ================================================================ mudanza de dominio
    La app pasó de juanluccianos.github.io a relevamientos.luccianos.com.ar.
@@ -206,6 +206,7 @@ const fmtPeso = n => Number(n).toLocaleString('es-AR', { minimumFractionDigits: 
 const fmtPts = n => Number(n).toLocaleString('es-AR', { maximumFractionDigits: 1 });
 
 const ICON = {
+  bandeja: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.5 5h13l3.5 7v6a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-6z"/></svg>',
   inicio: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5 12 3l9 7.5V21h-6v-6H9v6H3z"/></svg>',
   locales: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l1.5-5h15L21 9"/><path d="M4 9v11h16V9"/><path d="M3 9h18"/><path d="M10 20v-6h4v6"/></svg>',
   resumen: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20V10M10 20V4M16 20v-8M22 20H2"/></svg>',
@@ -735,9 +736,12 @@ async function pantallaEnvio(reg) {
 async function actualizarContador() {
   if (!S.token || !navigator.onLine) return pintarContador();
   try { S.cont = await api('/api/tareas/contador'); } catch { /* sin conexión */ }
+  if (esJefe()) { try { S.inf = await api('/api/informes/contador'); } catch { /* sin conexión */ } }
   pintarContador();
 }
 function pintarContador() {
+  const bi = $('#badge-informes');
+  if (bi && S.inf) { const k = S.inf.sin_ver || 0; bi.hidden = k === 0; bi.textContent = k > 99 ? '99+' : k; bi.title = `${k} informes sin ver`; }
   const el = $('#badge-tareas');
   if (!el || !S.cont) return;
   const n = S.cont.vencidas || 0;
@@ -774,13 +778,14 @@ function nav() {
   const h = location.hash || '#/';
   const links = [
     ['#/', 'Inicio', ICON.inicio, h === '#/' || h === '#'],
+    ...(esJefe() ? [['#/informes', 'Informes', ICON.bandeja, h.startsWith('#/informes'), 'informes']] : []),
     ['#/locales', 'Locales', ICON.locales, h.startsWith('#/locales') || h.startsWith('#/local/')],
     ['#/tareas', 'Tareas', ICON.tareas, h.startsWith('#/tarea'), 'tareas'],
     ['#/resumen', 'Resumen', ICON.resumen, h.startsWith('#/resumen')],
     ['#/cuenta', 'Cuenta', ICON.cuenta, h.startsWith('#/cuenta') || h.startsWith('#/admin')]
   ];
   return `<nav class="nav">${links.map(([href, txt, ico, act, extra]) =>
-    `<a href="${href}" class="${act ? 'activo' : ''}" ${act ? 'aria-current="page"' : ''}>${ico}<span>${txt}</span>${extra === 'tareas' ? '<i class="nav-badge" id="badge-tareas" hidden></i>' : ''}</a>`).join('')}</nav>`;
+    `<a href="${href}" class="${act ? 'activo' : ''}" ${act ? 'aria-current="page"' : ''}>${ico}<span>${txt}</span>${extra === 'tareas' ? '<i class="nav-badge" id="badge-tareas" hidden></i>' : extra === 'informes' ? '<i class="nav-badge" id="badge-informes" style="background:var(--accent)" hidden></i>' : ''}</a>`).join('')}</nav>`;
 }
 
 function pintar(v) {
@@ -820,6 +825,7 @@ const RUTAS = [
   [/^#\/relevar\/(\d+)$/, vRelevar],
   [/^#\/rel\/([0-9a-f-]{36})$/i, vRelevamiento],
   [/^#\/resumen$/, vResumen],
+  [/^#\/informes$/, vInformes],
   [/^#\/pendientes$/, vPendientes],
   [/^#\/admin$/, vAdmin],
   [/^#\/cuenta$/, vCuenta],
@@ -967,7 +973,7 @@ async function avisosBorradores() {
 
 async function vInicio() {
   if (esJefe()) {
-    try { return await vResumen(); }
+    try { return await vInformes(); }
     catch (e) { if (!e.sinRed) throw e; /* sin señal: el jefe ve la lista para relevar */ }
   }
 
@@ -1604,6 +1610,7 @@ async function vPendientes() {
 
 async function vRelevamiento(id) {
   const d = await api(`/api/relevamientos/${id}`);
+  if (esJefe()) post(`/api/informes/${id}/visto`, {}).then(() => actualizarContador()).catch(() => {});
   const r = d.relevamiento;
   const fotosDe = itemId => d.fotos.filter(f => f.item_id === itemId && f.kind !== 'google');
   const google = d.fotos.filter(f => f.kind === 'google');
@@ -1689,6 +1696,89 @@ async function vRelevamiento(id) {
 }
 
 /* ================================================================ vistas: resumen */
+
+/* ================================================================ vistas: informes (jefes) */
+
+const FILTROS_INF = [['sin_ver', 'Sin ver'], ['criticos', 'Con críticos'], ['semana', 'Esta semana'], ['todos', 'Todos']];
+function cuando(iso) {
+  if (!iso) return '';
+  const d = new Date(String(iso).replace(' ', 'T') + (String(iso).includes('Z') ? '' : 'Z'));
+  const hoy = new Date(), ayer = new Date(Date.now() - 864e5);
+  const hora = d.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' });
+  if (d.toDateString() === hoy.toDateString()) return `hoy, ${hora}`;
+  if (d.toDateString() === ayer.toDateString()) return `ayer, ${hora}`;
+  return d.toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit' }) + `, ${hora}`;
+}
+function estilosInformes() {
+  if (document.getElementById('estilos-informes')) return;
+  document.head.insertAdjacentHTML('beforeend', `<style id="estilos-informes">
+    .inf-filtros { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 16px; }
+    .inf-chip { height: 36px; padding: 0 14px; border: 0; border-radius: 999px; background: var(--white); box-shadow: inset 0 0 0 1px var(--line); font: 600 13.5px var(--font-b); color: var(--ink); cursor: pointer; }
+    .inf-chip.activo { background: var(--ink); color: var(--white); box-shadow: none; }
+    .inf-sup { margin-left: auto; height: 36px; padding: 0 10px; border: 0; border-radius: 10px; background: var(--white); box-shadow: inset 0 0 0 1px var(--line); font: 500 13.5px var(--font-b); }
+    .inf-lista { display: flex; flex-direction: column; gap: 10px; }
+    .inf-card { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; padding: 14px 16px; border-radius: var(--r); background: var(--white); box-shadow: var(--shadow); text-decoration: none; color: inherit; }
+    .inf-card.visto { background: var(--paper-2); box-shadow: inset 0 0 0 1px var(--line); }
+    .inf-punto { width: 9px; height: 9px; border-radius: 50%; background: var(--accent); flex: none; }
+    .inf-card.visto .inf-punto { background: transparent; }
+    .inf-txt { flex: 1; min-width: 180px; }
+    .inf-txt b { display: block; font: 700 16px var(--font-d); color: var(--ink); }
+    .inf-txt small { color: var(--mute); font-size: 13px; }
+    .inf-tags { display: flex; flex-wrap: wrap; gap: 6px; }
+    .inf-tag { padding: 4px 10px; border-radius: 999px; background: var(--paper-2); font-size: 12.5px; color: var(--soft); }
+    .inf-tag.rojo { background: #fbe6e4; color: var(--critico); font-weight: 700; }
+    .inf-ver { font-weight: 700; font-size: 13.5px; color: var(--accent-ink); white-space: nowrap; }
+    @media (max-width: 640px) { .inf-sup { margin-left: 0; width: 100%; } .inf-ver { display: none; } }
+  </style>`);
+}
+
+async function vInformes() {
+  if (!esJefe()) { location.hash = '#/'; return null; }
+  estilosInformes();
+  S.infVer = S.infVer || 'sin_ver';
+  const q = new URLSearchParams({ ver: S.infVer });
+  if (S.infSup) q.set('supervisor', S.infSup);
+  const d = await api('/api/informes?' + q);
+  S.inf = { sin_ver: d.sin_ver };
+  const vacio = {
+    sin_ver: 'No tenés informes sin ver. Cuando un supervisor mande un relevamiento, aparece acá.',
+    criticos: 'No hay relevamientos con ítems críticos desaprobados.',
+    semana: 'Esta semana todavía no llegaron relevamientos.',
+    todos: 'Todavía no hay relevamientos.'
+  }[S.infVer];
+  const tarjetas = d.informes.map(x => `
+    <a class="inf-card ${x.visto ? 'visto' : ''}" href="#/rel/${esc(x.id)}">
+      <span class="inf-punto" aria-hidden="true"></span>
+      ${anillo(x.score)}
+      <span class="inf-txt"><b>${esc(x.local)}</b><small>${esc(x.supervisor)} · ${cuando(x.created_at)}${x.sign_name ? ' · firmó ' + esc(x.sign_name) : ''}${x.virtual ? ' · virtual' : ''}</small></span>
+      <span class="inf-tags">
+        ${chipEscala(escala(x.score))}
+        ${x.criticos ? `<span class="inf-tag rojo">${x.criticos} crítico${x.criticos === 1 ? '' : 's'}</span>` : ''}
+        ${x.desaprobados ? `<span class="inf-tag">${x.desaprobados} ítem${x.desaprobados === 1 ? '' : 's'} con observaciones</span>` : ''}
+        ${x.tareas ? `<span class="inf-tag">${x.tareas} tarea${x.tareas === 1 ? '' : 's'} abierta${x.tareas === 1 ? '' : 's'}</span>` : ''}
+        ${x.fotos ? `<span class="inf-tag">${x.fotos} foto${x.fotos === 1 ? '' : 's'}</span>` : ''}
+      </span>
+      <span class="inf-ver">Ver informe ›</span>
+    </a>`).join('');
+  return {
+    titulo: 'Informes',
+    html: `
+      <p class="intro" style="margin:0 0 14px;color:var(--mute)">Los relevamientos que mandan los supervisores, del más nuevo al más viejo. Los que todavía no abriste tienen un punto verde.</p>
+      <div class="inf-filtros">
+        ${FILTROS_INF.map(([k, t]) => `<button type="button" class="inf-chip ${S.infVer === k ? 'activo' : ''}" data-ver="${k}">${t}${k === 'sin_ver' && d.sin_ver ? ` (${d.sin_ver})` : ''}</button>`).join('')}
+        <select class="inf-sup" id="inf-sup" aria-label="Supervisor">
+          <option value="">Todos los supervisores</option>
+          ${d.supervisores.map(u => `<option value="${u.id}" ${String(S.infSup || '') === String(u.id) ? 'selected' : ''}>${esc(u.name)}</option>`).join('')}
+        </select>
+      </div>
+      <div class="inf-lista">${tarjetas || `<div class="vacio"><p>${vacio}</p></div>`}</div>`,
+    montar() {
+      document.querySelectorAll('[data-ver]').forEach(b => b.onclick = () => { S.infVer = b.dataset.ver; render(); });
+      $('#inf-sup').onchange = e => { S.infSup = e.target.value || null; render(); };
+      pintarContador();
+    }
+  };
+}
 
 async function vResumen() {
   S.periodoResumen ||= periodoActual();
