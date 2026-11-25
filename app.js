@@ -9,7 +9,7 @@ const PORTAL = 'https://herramientas.luccianos.com.ar';
 const ACCESO_API = 'https://acceso-api.lucciano-viaticos.workers.dev';
 const ACCESO_APP = 'relevamientos';
 // Transición: mientras sea true se puede seguir entrando con la clave vieja. Al terminar, pasarlo a false.
-const LOGIN_VIEJO = true;
+const LOGIN_VIEJO = false;   // claves viejas apagadas (25/11): solo se entra desde el portal
 // Operativos con una sola app (supervisores, escaneo): sin botón para volver a Herramientas
 try { if (localStorage.getItem('herr_portal') === '0') document.head.insertAdjacentHTML('beforeend', '<style>[aria-label="Volver al portal"]{display:none!important}</style>'); } catch (e) { /* sin storage */ }
 const VERSION = '3.0.0';
