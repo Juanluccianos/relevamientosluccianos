@@ -298,7 +298,35 @@ function errorRed(lento) {
 
 // Cada pedido tiene un tiempo límite: con datos móviles flojos el celular cree que tiene internet
 // y sin esto la pantalla se quedaba esperando para siempre.
+/* ---- Pantallas rápidas: el inicio y la salud muestran al instante lo último que se vio y se actualizan solas
+   de fondo (si llegó algo nuevo, la pantalla se vuelve a dibujar). Se guarda en este navegador, por persona. ---- */
+const RAPIDAS = /^\/api\/(informes|resumen|locales)(\?|$)/;
+const RAPIDA_FRESCA_MS = 15000;
+const rapidaEnCurso = new Set();
+let rapidaRedibujo = null;
+function rapidaClave(path) { let u = ''; try { u = localStorage.getItem('herr_uid') || ''; } catch (e) { /* sin storage */ } return 'rapida:' + u + ':' + path; }
+function rapidaGuardar(k, d) { try { localStorage.setItem(k, JSON.stringify({ at: Date.now(), data: d })); } catch (e) { /* sin lugar: se ignora */ } }
 async function api(path, opts = {}) {
+  const metodo = String(opts.method || 'GET').toUpperCase();
+  if (metodo !== 'GET' || opts.raw || !RAPIDAS.test(path)) return apiRed(path, opts);
+  const k = rapidaClave(path);
+  let c = null;
+  try { c = JSON.parse(localStorage.getItem(k) || 'null'); } catch (e) { c = null; }
+  if (c && Date.now() - c.at < RAPIDA_FRESCA_MS) return c.data;
+  if (!c) { const d = await apiRed(path, opts); rapidaGuardar(k, d); return d; }
+  if (!rapidaEnCurso.has(k)) {
+    rapidaEnCurso.add(k);
+    const hash = location.hash;
+    apiRed(path, opts).then(d => {
+      const cambio = JSON.stringify(d) !== JSON.stringify(c.data);
+      rapidaGuardar(k, d);
+      if (cambio && location.hash === hash) { clearTimeout(rapidaRedibujo); rapidaRedibujo = setTimeout(() => { render(); }, 150); }
+    }).catch(() => { /* sin conexión: queda lo guardado */ }).finally(() => rapidaEnCurso.delete(k));
+  }
+  return c.data;
+}
+
+async function apiRed(path, opts = {}) {
   const { timeout = 15000, ...resto } = opts;
   const ctrl = new AbortController();
   const reloj = setTimeout(() => ctrl.abort(), timeout);
