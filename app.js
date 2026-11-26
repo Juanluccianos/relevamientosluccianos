@@ -282,7 +282,7 @@ const S = {
   rid: 0,
   cont: null,       // contador de tareas para el badge
   filtroTareas: 'abiertas',
-  adminTab: 'usuarios'
+  adminTab: 'locales'
 };
 
 /* ================================================================ API */
@@ -2026,8 +2026,9 @@ const ROL = { admin: 'Administrador', jefe: 'Jefe', supervisor: 'Supervisor' };
 
 async function vAdmin() {
   if (!esJefe()) { location.hash = '#/'; return null; }
-  const tab = S.adminTab || 'usuarios';
-  const vistas = { usuarios: adminUsuarios, locales: adminLocales, checklist: adminChecklist };
+  // Los usuarios y sus roles se manejan en el portal de Herramientas
+  const tab = S.adminTab === 'checklist' ? 'checklist' : 'locales';
+  const vistas = { locales: adminLocales, checklist: adminChecklist };
   const v = await vistas[tab]();
 
   return {
@@ -2035,7 +2036,7 @@ async function vAdmin() {
     atras: '#/cuenta',
     html: `
       <div class="tabs" role="tablist">
-        ${[['usuarios', 'Usuarios', ICON.cuenta], ['locales', 'Locales', ICON.locales], ['checklist', 'Checklist', ICON.tareas]].map(([k, t, i]) =>
+        ${[['locales', 'Locales', ICON.locales], ['checklist', 'Checklist', ICON.tareas]].map(([k, t, i]) =>
           `<button role="tab" data-tab="${k}" class="${tab === k ? 'activo' : ''}" aria-selected="${tab === k}">${i}<span>${t}</span></button>`).join('')}
       </div>
       ${v.html}
@@ -3072,12 +3073,7 @@ function vCuenta() {
           <span class="menu-ico">${ICON.llave}</span>
           <span class="fila-txt"><strong>Mi cuenta y otras herramientas</strong><small>Clave y apps, en el portal de Herramientas</small></span>
           <span class="flecha">${ICON.derecha}</span></a>
-        ${u.central ? '' : `<button class="menu-fila" id="clave">
-          <span class="menu-ico">${ICON.llave}</span>
-          <span class="fila-txt"><strong>Cambiar clave</strong><small>La de antes (mientras dure el cambio al portal)</small></span>
-          <span class="flecha">${ICON.derecha}</span>
-        </button>
-        <button class="menu-fila salir" id="salir-viejo">
+        ${u.central ? '' : `<button class="menu-fila salir" id="salir-viejo">
           <span class="menu-ico">${ICON.salir}</span>
           <span class="fila-txt"><strong>Cerrar esta sesión</strong><small>Es una sesión de antes del portal. Después entrá desde Herramientas.</small></span>
         </button>`}
